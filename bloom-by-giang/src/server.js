@@ -1,9 +1,22 @@
 require('dotenv').config();
+const { load } = require('./config');
 const { createApp } = require('./app');
-const db = require('./db');
+const { createStore, createPgPool } = require('./db');
 
-const port = process.env.PORT || 3000;
+async function main() {
+  const cfg = load();
+  const store = createStore(createPgPool(cfg));
+  await store.migrate();
+  const server = createApp(cfg, store).listen(cfg.port, () =>
+    console.log(JSON.stringify({ level: 'info', msg: 'server started', port: cfg.port, env: cfg.nodeEnv })));
 
-db.migrate()
-  .then(() => createApp().listen(port, () => console.log(`Bloom by Giang chạy tại http://localhost:${port}`)))
-  .catch(err => { console.error('Không kết nối được database:', err.message); process.exit(1); });
+  const shutdown = (sig) => {
+    console.log(JSON.stringify({ level: 'info', msg: 'shutting down', signal: sig }));
+    server.close(() => store.close().finally(() => process.exit(0)));
+    setTimeout(() => process.exit(1), 10000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+}
+
+main().catch(err => { console.error(JSON.stringify({ level: 'fatal', msg: err.message })); process.exit(1); });
