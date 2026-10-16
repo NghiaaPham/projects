@@ -4,6 +4,8 @@
 (function () {
   // Địa chỉ API: mặc định cùng domain; muốn tách domain thì đặt <meta name="bloom-api" content="https://...">
   const meta = document.querySelector('meta[name="bloom-api"]');
+  // mở file HTML lẻ (file://) không có server: không nối API, để giao diện dùng bộ nhớ trình duyệt
+  if (location.protocol === 'file:' && !(meta && meta.content)) return;
   const API = ((meta && meta.content) || '').replace(/\/$/, '') + '/api';
   const TOKEN_KEY = 'bloom_token';
   let pollMs = 15000; // ghi đè bằng CLIENT_POLL_MS từ server qua /api/config
@@ -25,13 +27,21 @@
   }
 
   const listeners = { orders: new Set(), flowers: new Set() };
+  const fails = { orders: 0, flowers: 0 }, retry = {};
   async function refresh(col) {
     if (!listeners[col].size) return;
+    clearTimeout(retry[col]);
     try {
       const items = await call('GET', '/' + col);
+      fails[col] = 0;
       const snap = { docs: items.map(x => ({ id: x.id, data: () => x })) };
       listeners[col].forEach(l => l.next(snap));
-    } catch (e) { listeners[col].forEach(l => l.error && l.error(e)); }
+    } catch (e) {
+      // lỗi mạng / máy chủ đang dậy: thử lại sớm (3s, 6s, 12s...) thay vì chờ tới lượt kiểm tra sau
+      fails[col]++;
+      retry[col] = setTimeout(() => refresh(col), Math.min(3000 * Math.pow(2, fails[col] - 1), pollMs));
+      listeners[col].forEach(l => l.error && l.error(e));
+    }
   }
   const soon = {};
   const refreshSoon = (col) => { clearTimeout(soon[col]); soon[col] = setTimeout(() => refresh(col), 400); };
@@ -81,17 +91,24 @@
       document.body.appendChild(wrap);
       const form = wrap.querySelector('form'), msg = wrap.querySelector('.msg');
       form.pw.focus();
+      const btn = form.querySelector('button');
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (btn.disabled) return; // chặn bấm hai lần
+        btn.disabled = true; btn.style.opacity = '.7';
         msg.textContent = 'Đang đăng nhập...';
+        // Render bản free ngủ sau 15 phút: lần đầu có thể chờ khoảng 1 phút
+        const slow = setTimeout(() => { msg.style.color = '#5B6770'; msg.textContent = 'Máy chủ đang khởi động, chờ khoảng 1 phút nhé...'; }, 3000);
+        const done = () => { clearTimeout(slow); btn.disabled = false; btn.style.opacity = ''; msg.style.color = ''; };
         try {
           const res = await fetch(API + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: form.pw.value }) });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) { msg.textContent = data.error || 'Không đăng nhập được'; return; }
+          done();
+          if (!res.ok) { msg.textContent = data.error || 'Không đăng nhập được'; form.pw.select(); return; }
           localStorage.setItem(TOKEN_KEY, data.token);
           wrap.remove();
           resolve();
-        } catch { msg.textContent = 'Không kết nối được server'; }
+        } catch { done(); msg.textContent = 'Không kết nối được server, kiểm tra mạng rồi bấm Đăng nhập lại'; }
       });
     });
   }
