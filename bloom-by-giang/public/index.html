@@ -232,7 +232,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .slip{width:100%;min-height:160px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:16px}
 .seg{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px;color:var(--muted)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:30;
-  background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:13px;font-weight:600;max-width:90%}
+  background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:13px;font-weight:600;max-width:90%;width:max-content}
 @media (max-width:420px){.kv{grid-template-columns:92px minmax(0,1fr)}}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .22s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
 </style>
@@ -265,7 +265,18 @@ const dmy = s => { const [y, m, d] = s.split('-'); return d + '/' + m + '/' + y;
 const WD = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
 const dayName = s => WD[fromYmd(s).getDay()];
 const uid = () => 'o' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-let TODAY = ymd(new Date());
+/* giờ của shop: luôn theo Việt Nam (Asia/Saigon), kể cả khi điện thoại đặt múi giờ khác */
+const VN_FMT = (() => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); } catch (e) { return null; } })();
+const vnNow = () => {
+  const d = new Date();
+  if (!VN_FMT) return { ymd: ymd(d), min: d.getHours() * 60 + d.getMinutes() };
+  const p = {}; VN_FMT.formatToParts(d).forEach(x => { p[x.type] = x.value; });
+  return { ymd: p.year + '-' + p.month + '-' + p.day, min: (Number(p.hour) % 24) * 60 + Number(p.minute) };
+};
+let TODAY = vnNow().ymd;
+/* tìm kiếm không dấu: "anh tuyet" khớp "Ánh Tuyết" */
+const fold = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
+const digits = s => String(s ?? '').replace(/\D/g, '');
 const initials = n => (n || '?').trim().split(/\s+/).slice(-2).map(w => w[0]).join('').toUpperCase();
 
 /* money: price is per bouquet; total = price x qty + ship - discount */
@@ -277,17 +288,18 @@ const remainOf = o => o.status === 'canceled' ? 0 : Math.max(totalOf(o) - collec
 const custKey = o => String(o.phone || '').replace(/\D/g, '') || String(o.customer || '').trim().toLowerCase();
 const createdYmd = o => { const d = o.created ? new Date(o.created) : null; return d && !isNaN(d) ? ymd(d) : o.date; };
 const daysBetween = (a, b) => Math.round((fromYmd(b) - fromYmd(a)) / 86400000);
-const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+const nowMin = () => vnNow().min;
 const dueMin = o => { const m = /^(\d{1,2}):(\d{2})$/.exec(o.time || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
 /* flags: late (past due, not finished), urgent (due within 2h, not delivered yet), pre (ordered 1+ day ahead) */
 function flagsOf(o) {
-  const f = { late: false, urgent: false, pre: false, left: '' };
+  const f = { late: false, urgent: false, pre: false, left: '', lateBy: 0, soon: false };
   if (!(o.status === 'pending' || o.status === 'making' || o.status === 'shipping')) return f;
-  const due = dueMin(o);
-  f.late = o.date < TODAY || (o.date === TODAY && due != null && due < nowMin());
+  const due = dueMin(o), now = nowMin();
+  f.late = o.date < TODAY || (o.date === TODAY && due != null && due < now);
+  if (f.late && o.date === TODAY) f.lateBy = now - due; // trễ bao nhiêu phút (đơn hôm nay)
   if (!f.late && o.date === TODAY && due != null) {
-    const d = due - nowMin();
-    if (d <= 120) { f.urgent = true; f.left = d < 60 ? d + ' phút' : Math.floor(d / 60) + 'g' + (d % 60 ? pad(d % 60) : ''); }
+    const d = due - now;
+    if (d <= 120) { f.urgent = true; f.soon = d < 60; f.left = d < 60 ? d + ' phút' : Math.floor(d / 60) + 'g' + (d % 60 ? pad(d % 60) : ''); }
   }
   f.pre = !f.late && o.date >= TODAY && daysBetween(createdYmd(o), o.date) >= 1;
   return f;
@@ -325,7 +337,7 @@ const FLOW = ['pending', 'making', 'shipping', 'done'];
 const CHANNELS = ['Instagram', 'Threads', 'TikTok'];
 
 /* ---------- storage: shared db when this viewer has it, otherwise this browser ---------- */
-const S = { orders: [], flowers: [], mode: 'local', ready: false, demoOff: false, db: null, loaded: {}, slow: false, connErr: false };
+const S = { orders: [], flowers: [], mode: 'local', ready: false, db: null, loaded: {}, slow: false, connErr: false };
 const LS = {
   get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
@@ -394,9 +406,8 @@ async function hydrateImages() {
 let onChange = () => {};
 
 // Dữ liệu chỉ lấy từ database (hoặc bộ nhớ trình duyệt khi chạy file lẻ), không có dữ liệu mẫu
-function useDemo() { return false; }
-function visible() { return { orders: S.orders, flowers: S.flowers, demo: false }; }
-function dismissDemo() { S.demoOff = true; LS.set('fm_demo_off', 1); }
+function visible() { return { orders: S.orders, flowers: S.flowers }; }
+try { localStorage.removeItem('fm_demo_off'); } catch (e) {} // khoá cũ của bản có dữ liệu mẫu
 
 /* optimistic save: show the change at once, put things back if the save fails */
 async function saveItem(col, item) {
@@ -410,7 +421,7 @@ async function saveItem(col, item) {
     onChange();
   };
   if (S.mode === 'db' && S.db) {
-    try { await S.db.collection(col).doc(item.id).set(item); dismissDemo(); return true; }
+    try { await S.db.collection(col).doc(item.id).set(item); return true; }
     catch (e) {
       revert();
       toast(e && e.code === 'quota_exceeded' ? 'Bộ nhớ đã đầy, hãy xóa bớt ảnh cũ' :
@@ -419,17 +430,40 @@ async function saveItem(col, item) {
     }
   }
   if (!(await localWrite(col, [item]))) { revert(); toast('Bộ nhớ trình duyệt đầy. Hãy sao lưu rồi xóa bớt đơn cũ.'); return false; }
-  dismissDemo(); return true;
+  return true;
 }
-async function removeItem(col, id) {
+/* xóa: ẩn ngay, chờ 5 giây (để bấm Hoàn tác) rồi mới xóa thật trên server/máy.
+   Nhờ vậy ảnh của đơn vẫn còn nguyên nếu chủ shop đổi ý. */
+const PENDING_DEL = new Map(); // 'col:id' -> { col, item, timer }
+const isPendingDel = (col, id) => PENDING_DEL.has(col + ':' + id);
+async function commitDelete(key) {
+  const p = PENDING_DEL.get(key); if (!p) return;
+  clearTimeout(p.timer); PENDING_DEL.delete(key);
+  if (S.mode === 'db' && S.db) {
+    try { await S.db.collection(p.col).doc(p.item.id).delete(); }
+    catch (e) { if (!S[p.col].some(x => x.id === p.item.id)) S[p.col].push(p.item); onChange(); toast('Chưa xóa được, thử lại sau'); }
+  } else await localWrite(p.col, [], [p.item.id]);
+}
+function undoDelete(key) {
+  const p = PENDING_DEL.get(key); if (!p) return;
+  clearTimeout(p.timer); PENDING_DEL.delete(key);
+  if (!S[p.col].some(x => x.id === p.item.id)) S[p.col].push(p.item);
+  if (S.mode !== 'db') localWrite(p.col, [p.item]);
+  onChange();
+}
+function removeItem(col, id, msg) {
   const gone = S[col].find(x => x.id === id);
+  if (!gone) return;
   S[col] = S[col].filter(x => x.id !== id);
   onChange();
-  if (S.mode === 'db' && S.db) {
-    try { await S.db.collection(col).doc(id).delete(); }
-    catch (e) { if (gone) S[col].push(gone); onChange(); toast('Chưa xóa được, thử lại sau'); }
-  } else await localWrite(col, [], [id]);
+  const key = col + ':' + id;
+  PENDING_DEL.set(key, { col, item: gone, timer: setTimeout(() => commitDelete(key), UNDO_MS + 300) });
+  toast(msg, () => { if (!PENDING_DEL.has(key)) { toast('Đã xóa rồi, không hoàn tác được'); return; } undoDelete(key); toast('Đã hoàn tác'); });
 }
+const flushDeletes = () => { [...PENDING_DEL.keys()].forEach(commitDelete); };
+/* rời app (tắt màn hình, chuyển app) thì xóa luôn, không để đơn đã xóa quay lại */
+window.addEventListener('pagehide', flushDeletes);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushDeletes(); });
 
 async function initStore() {
   let db = null;
@@ -443,7 +477,7 @@ async function initStore() {
   // có server: chỉ hiển thị dữ liệu database trả về
   S.db = db; S.mode = 'db'; S.orders = []; S.flowers = [];
   const sub = (col) => db.collection(col).onSnapshot(snap => {
-    S[col] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    S[col] = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => !isPendingDel(col, x.id));
     S.loaded[col] = true; S.connErr = false; S.ready = true; onChange();
   }, () => {
     // máy chủ đang ngủ/khởi động: chưa có dữ liệu thì báo đang kết nối, không báo lỗi
@@ -470,14 +504,30 @@ function customersFrom(orders) {
 }
 /* ---------- view state ---------- */
 const V = { tab: 'today', date: TODAY, filter: 'all', q: '', range: 'week', week: 0, sort: 'soon' };
+/* nhớ tab và bộ lọc đang xem khi mở lại app (chỉ là tuỳ chọn hiển thị, không phải dữ liệu); ngày luôn là hôm nay */
+const UI_KEY = 'fm_ui';
+const saveUi = () => LS.set(UI_KEY, { tab: V.tab, filter: V.filter });
 const TABS = [
   { k: 'today', n: 'Hôm nay', i: I.home }, { k: 'orders', n: 'Đơn hàng', i: I.list },
   { k: 'customers', n: 'Khách', i: I.users }, { k: 'flowers', n: 'Hoa', i: I.flower }, { k: 'report', n: 'Báo cáo', i: I.chart }
 ];
 
-function toast(msg) {
-  const r = $('#toastRoot'); r.innerHTML = '<div class="toast" role="status">' + esc(msg) + '</div>';
-  clearTimeout(toast.t); toast.t = setTimeout(() => { r.innerHTML = ''; }, 1800);
+/* toast(msg) hiện 1,8 giây; toast(msg, undoFn) hiện 5 giây kèm nút Hoàn tác */
+const UNDO_MS = 5000;
+{ const u = LS.get(UI_KEY) || {};
+  if (TABS.some(t => t.k === u.tab)) V.tab = u.tab;
+  if (u.filter === 'all' || u.filter === 'unpaid' || ST[u.filter]) V.filter = u.filter; }
+function toast(msg, undo) {
+  const r = $('#toastRoot');
+  r.innerHTML = '<div class="toast" role="status"' + (undo ? ' style="display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px"' : '') + '>' + '<span>' + esc(msg) + '</span>' +
+    (undo ? '<button class="btn sm" type="button" data-act="undo" style="min-height:32px;flex:none;color:var(--ink)">Hoàn tác</button>' : '') + '</div>';
+  toast.undo = undo || null;
+  clearTimeout(toast.t); toast.t = setTimeout(() => { r.innerHTML = ''; toast.undo = null; }, undo ? UNDO_MS : 1800);
+}
+function runUndo() {
+  const f = toast.undo; if (!f) return;
+  toast.undo = null; clearTimeout(toast.t); $('#toastRoot').innerHTML = '';
+  f();
 }
 
 function thumb(o) {
@@ -485,9 +535,11 @@ function thumb(o) {
 }
 function pill(k) { return '<span class="pill ' + ST[k].c + '">' + ST[k].n + '</span>'; }
 
+const lateText = m => m < 60 ? m + ' phút' : Math.floor(m / 60) + ' giờ' + (m % 60 ? ' ' + (m % 60) + ' phút' : '');
 function tagsHtml(o, noOwe) {
   const f = flagsOf(o); let h = '';
-  if (f.late) h += '<span class="tag late">Quá hạn</span>';
+  if (f.late) h += '<span class="tag late">' + (f.lateBy ? 'Trễ ' + lateText(f.lateBy) : 'Quá hạn') + '</span>';
+  else if (f.soon) h += '<span class="tag urgent">' + (f.left === '0 phút' ? 'Sắp giao · đến giờ' : 'Sắp giao · còn ' + f.left) + '</span>';
   else if (f.urgent) h += '<span class="tag urgent">Gấp · còn ' + f.left + '</span>';
   if (f.pre) h += '<span class="tag pre">Đặt trước</span>';
   if (o.group && o.of > 1) h += '<span class="tag" style="background:var(--surface2);color:var(--ink)">Bó ' + o.part + '/' + o.of + '</span>';
@@ -518,9 +570,6 @@ function orderCard(o, rank, inGroup) {
 const IN_APP = /FBAN|FBAV|FB_IAB|Messenger|Instagram|Zalo|Line\/|MicroMessenger/i.test(navigator.userAgent || '');
 function iabBanner() {
   return IN_APP ? '<div class="notice"><span>Bạn đang mở trong trình duyệt của Messenger/Facebook. Dữ liệu ở đây dễ bị mất. Hãy bấm dấu ... rồi chọn Mở bằng Safari (hoặc Chrome) và dùng ở đó.</span></div>' : '';
-}
-function demoBanner() {
-  return '';
 }
 
 
@@ -558,7 +607,7 @@ function grouped(units) {
 }
 
 function viewToday() {
-  const { orders, demo } = visible();
+  const { orders } = visible();
   const day = orders.filter(o => o.date === V.date);
   const list = day.filter(o => !DONE.includes(o.status)).sort(byTime).concat(day.filter(o => DONE.includes(o.status)).sort(byTime));
   const live = day.filter(o => o.status !== 'canceled');
@@ -572,8 +621,8 @@ function viewToday() {
   const extra = overdue.length || soon.length;
   let r = 0; const rank = new Map(); const dayUnits = unitsOf(list);
   dayUnits.forEach(u => { if (unitOpen(u) && r < 3) rank.set(u[0].id, ++r); });
-  return demoBanner(demo) +
-    '<div class="pagehead"><div><h1 class="h1">' + (isToday ? 'Hôm nay' : dayName(V.date)) + '</h1><div class="sub">' + dayName(V.date) + ', ' + dmy(V.date) + '</div></div></div>' +
+  return '<div class="pagehead"><div><h1 class="h1">' + (isToday ? 'Hôm nay' : dayName(V.date)) + '</h1><div class="sub">' + dayName(V.date) + ', ' + dmy(V.date) + '</div></div></div>' +
+    backupLine() +
     '<div class="datebar"><button class="icon-btn" type="button" data-date="-1" aria-label="Ngày trước">' + I.chevL + '</button>' +
     '<input type="date" id="dateIn" value="' + V.date + '" aria-label="Chọn ngày">' +
     '<button class="icon-btn" type="button" data-date="1" aria-label="Ngày sau">' + I.chevR + '</button>' +
@@ -593,9 +642,10 @@ function viewToday() {
 let lastCount = 0;
 function ordersListHtml() {
   const { orders } = visible();
-  const q = V.q.trim().toLowerCase();
+  const q = fold(V.q.trim().replace(/\s+/g, ' ')), qd = /^[\d\s.+-]+$/.test(q) ? digits(q) : '';
   let list = orders.filter(o => V.filter === 'all' ? true : V.filter === 'unpaid' ? remainOf(o) > 0 : o.status === V.filter);
-  if (q) list = list.filter(o => [o.name, o.customer, o.phone, o.note, o.address].join(' ').toLowerCase().includes(q));
+  // không dấu, không phân biệt hoa thường; gõ số thì so cả SĐT bỏ khoảng trắng/dấu chấm
+  if (q) list = list.filter(o => fold([o.name, o.customer, o.phone, o.note, o.address].join(' ')).includes(q) || (qd.length >= 3 && digits(o.phone).includes(qd)));
   lastCount = list.length;
   if (!list.length) return '<div class="empty"><b>Không có đơn phù hợp</b>Thử đổi bộ lọc hoặc từ khóa.</div>';
   if (V.sort === 'new') {
@@ -615,12 +665,12 @@ function ordersListHtml() {
 }
 
 function viewOrders() {
-  const { orders, demo } = visible();
+  const { orders } = visible();
   const c = k => orders.filter(o => o.status === k).length;
   const unpaid = orders.filter(o => remainOf(o) > 0).length;
   const body = ordersListHtml();
   const chip = (k, label, n) => '<button class="chip" type="button" data-filter="' + k + '" aria-pressed="' + (V.filter === k) + '">' + label + ' <b class="num">' + n + '</b></button>';
-  return demoBanner(demo) + '<div class="pagehead"><div><h1 class="h1">Đơn hàng</h1><div class="sub num" id="ordCount">' + lastCount + ' đơn</div></div></div>' +
+  return '<div class="pagehead"><div><h1 class="h1">Đơn hàng</h1><div class="sub num" id="ordCount">' + lastCount + ' đơn</div></div></div>' +
     '<input type="search" class="search" id="qIn" placeholder="Tìm tên, SĐT, nội dung thiệp" value="' + esc(V.q) + '" aria-label="Tìm đơn">' +
     '<div class="chips">' + chip('all', 'Tất cả', orders.length) + STATUS.map(s => chip(s.k, s.n, c(s.k))).join('') + chip('unpaid', 'Còn thu tiền', unpaid) + '</div>' +
     '<div class="seg"><span>Xếp theo</span><button class="chip" type="button" data-sort="soon" aria-pressed="' + (V.sort === 'soon') + '">Giao sớm nhất</button>' +
@@ -630,9 +680,9 @@ function viewOrders() {
 
 /* ---------- Khách ---------- */
 function viewCustomers() {
-  const { orders, demo } = visible();
+  const { orders } = visible();
   const cs = customersFrom(orders);
-  return demoBanner(demo) + '<div class="pagehead"><div><h1 class="h1">Khách hàng</h1><div class="sub num">' + cs.length + ' khách</div></div></div>' +
+  return '<div class="pagehead"><div><h1 class="h1">Khách hàng</h1><div class="sub num">' + cs.length + ' khách</div></div></div>' +
     (cs.length ? '<div class="list">' + cs.map(c => '<button class="rowitem" type="button" data-cust="' + esc(c.key) + '"><div class="avatar">' + esc(initials(c.name)) + '</div>' +
       '<div class="grow"><div class="t">' + esc(c.name) + '</div><div class="s">' + esc(c.phone || 'Chưa có SĐT') + ' · mua gần nhất ' + dmy(c.last) + '</div></div>' +
       '<div style="text-align:right"><div class="t num" style="color:var(--accent)">' + money(c.total) + '</div><div class="s num">' + c.n + ' đơn</div></div></button>').join('') + '</div>' :
@@ -641,9 +691,9 @@ function viewCustomers() {
 
 /* ---------- Hoa ---------- */
 function viewFlowers() {
-  const { orders, flowers, demo } = visible();
+  const { orders, flowers } = visible();
   const sold = n => orders.filter(o => o.name === n && o.status !== 'canceled').length;
-  return demoBanner(demo) + '<div class="pagehead"><div><h1 class="h1">Hoa</h1><div class="sub">Mẫu hoa và giá, chọn nhanh khi lên đơn</div></div>' +
+  return '<div class="pagehead"><div><h1 class="h1">Hoa</h1><div class="sub">Mẫu hoa và giá, chọn nhanh khi lên đơn</div></div>' +
     '<button class="btn primary sm" type="button" data-act="new-flower">' + I.plus + 'Thêm mẫu</button></div>' +
     (flowers.length ? '<div class="list">' + flowers.map(f => '<button class="rowitem" type="button" data-flower="' + esc(f.id) + '"><div class="avatar">' +
       (f.image ? '<img alt="" src="' + f.image + '">' : I.flower.replace('<svg', '<svg width="22" height="22"')) + '</div><div class="grow"><div class="t">' + esc(f.name) + '</div><div class="s num">Đã bán ' + sold(f.name) + ' đơn</div></div>' +
@@ -653,7 +703,7 @@ function viewFlowers() {
 
 /* ---------- Báo cáo ---------- */
 function viewReport() {
-  const { orders, demo } = visible();
+  const { orders } = visible();
   const t = fromYmd(TODAY), Y = t.getFullYear(), M = t.getMonth(), last = new Date(Y, M + 1, 0).getDate();
   const wk = Math.min(4, Math.max(1, V.week || Math.ceil(t.getDate() / 7)));
   const cols = []; let from, to, what, title;
@@ -693,7 +743,7 @@ function viewReport() {
   const byCh = {}; inR.forEach(o => { byCh[o.channel || 'Khác'] = (byCh[o.channel || 'Khác'] || 0) + 1; });
   const chList = Object.entries(byCh).sort((a, b) => b[1] - a[1]), chMax = chList.length ? chList[0][1] : 1;
   const rg = [['week', '7 ngày'], ['month', 'Tháng này'], ['year', 'Năm nay']];
-  return demoBanner(demo) + '<div class="pagehead"><div><h1 class="h1">Báo cáo</h1><div class="sub">' + what + ' · không tính đơn đã huỷ</div></div></div>' +
+  return '<div class="pagehead"><div><h1 class="h1">Báo cáo</h1><div class="sub">' + what + ' · không tính đơn đã huỷ</div></div></div>' +
     '<div class="chips">' + rg.map(r => '<button class="chip" type="button" data-range="' + r[0] + '" aria-pressed="' + (V.range === r[0]) + '">' + r[1] + '</button>').join('') + '</div>' +
     (V.range === 'week' ? '<div class="chips">' + [1, 2, 3, 4].map(w => '<button class="chip" type="button" data-week="' + w + '" aria-pressed="' + (wk === w) + '">Tuần ' + w + '</button>').join('') + '</div>' : '') +
     '<div class="stats"><div class="stat hero" style="grid-column:1/-1"><div class="lbl">Doanh thu · trung bình ' + money(n ? rev / n : 0) + '/đơn</div><div class="val num" style="font-size:34px">' + money(rev) + '</div></div>' +
@@ -736,7 +786,6 @@ function setSheet(html, kind) {
   r.innerHTML = '<div class="scrim" data-act="close"><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>' + html + '</div></div>';
 }
 const closeBtn = '<button class="icon-btn" type="button" data-act="close" aria-label="Đóng">' + I.x + '</button>';
-function guardDemo() { if (useDemo()) { toast('Đây là dữ liệu mẫu. Hãy thêm đơn thật để bắt đầu.'); return true; } return false; }
 function findOrder(id) { return visible().orders.find(o => o.id === id); }
 
 function slipText(o) {
@@ -808,7 +857,7 @@ function extraBlock(n) {
     '<label class="field"><span>Tên bó hoa</span><input type="text" id="xName' + n + '" placeholder="Để trống là giống bó 1"></label>' +
     '<div class="upload"><div class="thumb" id="xThumb' + n + '">' + I.img + '</div><div><label class="btn sm" for="xImg' + n + '">Chọn ảnh mẫu</label><input id="xImg' + n + '" type="file" accept="image/*" hidden>' +
     '<button class="btn sm" type="button" data-act="rm-ximg" data-n="' + n + '" style="margin-left:8px">Bỏ ảnh</button></div></div>' +
-    '<label class="field"><span>Giá bó ' + n + ' (₫)</span><input type="number" id="xPrice' + n + '" inputmode="numeric" min="0" step="1000"></label>' +
+    '<label class="field"><span>Giá bó ' + n + ' (₫)</span><input type="number" id="xPrice' + n + '" inputmode="numeric" min="0" step="1000">' + hintEl('xPrice' + n, '') + '</label>' +
     '<label class="field"><span>Địa chỉ giao</span><input type="text" id="xAddr' + n + '"></label>' +
     '<label class="field"><span>Nội dung thiệp</span><textarea id="xNote' + n + '" placeholder="Lời nhắn khách muốn viết vào thiệp"></textarea></label></div>';
 }
@@ -817,6 +866,62 @@ function syncExtras() {
   bl.forEach((b, i) => { const r = b.querySelector('[data-act="rm-extra"]'); if (r) r.hidden = i !== bl.length - 1; });
   const add = $('#addExtra'); if (add) { add.hidden = extraCount >= MAX_EXTRA; add.textContent = '+ Thêm bó ' + (extraCount + 2); }
   updateTotal();
+}
+
+/* số tiền: gõ 450 hiểu là 450.000 ₫, hiện ngay bên dưới ô cho chắc */
+const MONEY_IDS = /^(fPrice|fShip|fDisc|fDep|gPrice|xPrice\d+)$/;
+const moneyHint = v => { const n = vnd(Number(v) || 0); return n > 0 ? '= ' + money(n) : ''; };
+const hintEl = (id, v) => { const h = moneyHint(v); return '<div class="sub num" id="h_' + id + '"' + (h ? '' : ' hidden') + ' style="margin-top:0">' + h + '</div>'; };
+function syncHint(el) {
+  const h = $('#h_' + el.id); if (!h) return;
+  const t = moneyHint(el.value); h.textContent = t; h.hidden = !t;
+}
+/* ngày giao nhanh: Hôm nay · Mai · Ngày kia (theo giờ Việt Nam) */
+const DATE_CHIPS = [[0, 'Hôm nay'], [1, 'Mai'], [2, 'Ngày kia']];
+const dateChips = v => '<div class="chips" id="fDateChips" style="margin:-6px 0 0" aria-label="Chọn nhanh ngày giao">' +
+  DATE_CHIPS.map(([n, l]) => '<button type="button" class="chip" data-dchip="' + n + '" aria-pressed="' + (v === addDays(TODAY, n)) + '">' + l + '</button>').join('') + '</div>';
+function syncDateChips() {
+  const v = ($('#fDate') || {}).value;
+  document.querySelectorAll('#fDateChips [data-dchip]').forEach(b => b.setAttribute('aria-pressed', String(v === addDays(TODAY, Number(b.dataset.dchip)))));
+}
+/* khách cũ: gõ SĐT hoặc tên là gợi ý khách đã từng đặt (tên, địa chỉ lần gần nhất), bấm để điền */
+const phoneKey = p => { const d = digits(p); return /^84\d{9}$/.test(d) ? '0' + d.slice(2) : d; };
+function knownCustomers() {
+  const m = new Map();
+  // cũ trước, mới sau; trong một đơn nhiều bó thì bó 1 (địa chỉ chính của khách) tính là mới nhất
+  S.orders.slice().sort((a, b) => (a.date + (a.created || '')).localeCompare(b.date + (b.created || '')) || (b.part || 1) - (a.part || 1)).forEach(o => {
+    const k = custKey(o); if (!k || !(o.customer || o.phone)) return;
+    const c = m.get(k) || { name: '', phone: '', address: '', last: '' };
+    if (o.customer) c.name = o.customer; if (o.phone) c.phone = o.phone; if (o.address) c.address = o.address; c.last = o.date;
+    m.set(k, c);
+  });
+  return [...m.values()].sort((a, b) => b.last.localeCompare(a.last));
+}
+let custSug = [];
+function suggestCustomers(fromId) {
+  const box = $('#custSug'); if (!box) return;
+  const name = $('#fCust').value, phone = $('#fPhone').value, addr = $('#fAddr').value;
+  const pd = phoneKey(phone), qn = fold(name.trim());
+  let list = [];
+  if (fromId === 'fPhone' && pd.length >= 4) list = knownCustomers().filter(c => phoneKey(c.phone).includes(pd)).sort((a, b) => phoneKey(b.phone).startsWith(pd) - phoneKey(a.phone).startsWith(pd));
+  else if (fromId === 'fCust' && qn.length >= 2) list = knownCustomers().filter(c => fold(c.name).includes(qn));
+  // đã điền đúng khách này rồi thì thôi gợi ý
+  list = list.filter(c => !(c.name.trim() === name.trim() && phoneKey(c.phone) === pd && (!c.address || c.address === addr.trim()))).slice(0, 3);
+  custSug = list;
+  box.hidden = !list.length;
+  box.innerHTML = list.length ? '<div class="sub" style="margin:0 0 6px">Khách cũ, bấm để điền</div><div style="display:flex;flex-direction:column;gap:6px">' +
+    list.map((c, i) => '<button type="button" class="chip" data-sug="' + i + '" style="justify-content:flex-start;text-align:left;border-radius:14px;padding:6px 12px;white-space:normal;min-width:0">' +
+      '<span style="min-width:0"><b>' + esc(c.name || 'Khách lẻ') + '</b>' + (c.phone ? ' · <span class="num">' + esc(c.phone) + '</span>' : '') +
+      (c.address ? '<br><span class="sub" style="font-size:12px">' + esc(c.address) + '</span>' : '') + '</span></button>').join('') + '</div>' : '';
+}
+function applyCustomer(i) {
+  const c = custSug[i]; if (!c) return;
+  if (c.name) $('#fCust').value = c.name;
+  if (c.phone) $('#fPhone').value = c.phone;
+  if (c.address) $('#fAddr').value = c.address;
+  formDirty = true; custSug = [];
+  const box = $('#custSug'); if (box) { box.hidden = true; box.innerHTML = ''; }
+  toast('Đã điền khách cũ');
 }
 
 function updateTotal() {
@@ -837,19 +942,21 @@ function orderForm(o) {
   formImage = o.image || ''; extraCount = 0; extraImages = {};
   const fl = visible().flowers;
   const chans = !o.channel || CHANNELS.includes(o.channel) ? CHANNELS : CHANNELS.concat(o.channel); // an old order keeps its old channel when edited
-  const num = (id, label, v, min) => '<label class="field"><span>' + label + '</span><input type="number" id="' + id + '" inputmode="numeric" min="' + min + '" step="' + (id === 'fQty' ? 1 : 1000) + '" value="' + esc(id === 'fQty' || !v ? v : vnd(v)) + '"></label>';
+  const num = (id, label, v, min) => '<label class="field"><span>' + label + '</span><input type="number" id="' + id + '" inputmode="numeric" min="' + min + '" step="' + (id === 'fQty' ? 1 : 1000) + '" value="' + esc(id === 'fQty' || !v ? v : vnd(v)) + '">' + (id === 'fQty' ? '' : hintEl(id, v)) + '</label>';
   return '<div class="sheet-head"><h2 class="h1">' + (isNew ? 'Đơn mới' : 'Sửa đơn') + '</h2>' + closeBtn + '</div>' +
     '<form id="orderForm" style="display:flex;flex-direction:column;gap:14px" data-id="' + (isNew ? '' : esc(o.id)) + '" novalidate>' +
     (fl.length ? '<div><div class="sub" style="margin-bottom:6px">Chọn nhanh từ danh mục hoa</div><div class="chips" style="margin:0">' + fl.map(f => '<button type="button" class="chip" data-pick="' + esc(f.id) + '">' + esc(f.name) + '</button>').join('') + '</div></div>' : '') +
     '<label class="field"><span>Tên bó hoa</span><input type="text" id="fName" required value="' + esc(o.name) + '" placeholder="Ví dụ: hoa ly mix"></label>' +
     '<div class="upload"><div class="thumb" id="fThumb">' + (o.image ? '<img alt="" src="' + o.image + '">' : I.img) + '</div><div><label class="btn sm" for="fImg">Chọn ảnh mẫu</label><input id="fImg" type="file" accept="image/*" hidden>' +
     '<button class="btn sm" type="button" data-act="rm-img" style="margin-left:8px">Bỏ ảnh</button></div></div>' +
-    '<div class="grid2"><label class="field"><span>Tên khách</span><input type="text" id="fCust" value="' + esc(o.customer) + '"></label>' +
-    '<label class="field"><span>SĐT / Zalo</span><input type="tel" id="fPhone" inputmode="tel" value="' + esc(o.phone) + '"></label></div>' +
+    '<div class="grid2"><label class="field"><span>Tên khách</span><input type="text" id="fCust" autocomplete="off" value="' + esc(o.customer) + '"></label>' +
+    '<label class="field"><span>SĐT / Zalo</span><input type="tel" id="fPhone" inputmode="tel" autocomplete="off" value="' + esc(o.phone) + '"></label></div>' +
+    '<div id="custSug" hidden style="margin-top:-6px"></div>' +
     '<div class="grid2"><label class="field"><span>Kênh đặt</span><select id="fChan">' + chans.map(c => '<option' + (o.channel === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></label>' +
     '<label class="field"><span>Trạng thái</span><select id="fStat">' + STATUS.map(s => '<option value="' + s.k + '"' + (o.status === s.k ? ' selected' : '') + '>' + s.n + '</option>').join('') + '</select></label></div>' +
     '<div class="grid2"><label class="field"><span>Ngày giao</span><input type="date" id="fDate" required value="' + o.date + '"></label>' +
     '<label class="field"><span>Giờ khách yêu cầu giao</span><input type="time" id="fTime" required value="' + esc(o.time) + '"></label></div>' +
+    dateChips(o.date) +
     '<div class="grid2">' + num('fPrice', 'Giá mỗi bó (₫)', o.price, 0) + num('fQty', 'Số lượng', o.qty || 1, 1) + '</div>' +
     '<div class="grid2">' + num('fShip', 'Phí ship (₫)', o.ship, 0) + num('fDisc', 'Giảm giá (₫)', o.discount, 0) + '</div>' +
     '<div class="sub" style="margin-top:-4px">Gõ 780 hoặc 780000 đều được. Số dưới 1.000 tự hiểu là nghìn đồng.</div>' +
@@ -867,7 +974,7 @@ function flowerForm(f) {
   return '<div class="sheet-head"><h2 class="h1">' + (isNew ? 'Thêm mẫu hoa' : 'Sửa mẫu hoa') + '</h2>' + closeBtn + '</div>' +
     '<form id="flowerForm" style="display:flex;flex-direction:column;gap:14px" data-id="' + (isNew ? '' : esc(f.id)) + '" novalidate>' +
     '<label class="field"><span>Tên mẫu</span><input type="text" id="gName" required value="' + esc(f.name) + '"></label>' +
-    '<label class="field"><span>Giá (₫)</span><input type="number" id="gPrice" inputmode="numeric" min="0" step="1000" value="' + esc(f.price ? vnd(f.price) : f.price) + '"></label>' +
+    '<label class="field"><span>Giá (₫)</span><input type="number" id="gPrice" inputmode="numeric" min="0" step="1000" value="' + esc(f.price ? vnd(f.price) : f.price) + '">' + hintEl('gPrice', f.price) + '</label>' +
     '<div class="actions"><button class="btn" type="button" data-act="close">Huỷ</button>' +
     (isNew ? '' : '<button class="btn danger" type="button" data-act="del-flower">Xóa</button>') + '<button class="btn primary" type="submit">Lưu</button></div></form>';
 }
@@ -926,6 +1033,23 @@ function backupSheet() {
       '<div class="actions" id="logoutRow"><button class="btn danger" type="button" data-act="logout-ask">Đăng xuất</button></div>' : '');
 }
 
+/* nhắc sao lưu: có đơn mà 7 ngày chưa tải/sao chép bản sao lưu (chỉ lưu mốc thời gian trên máy này) */
+const DAY_MS = 86400000;
+function markBackup() { LS.set('fm_backup_at', Date.now()); LS.set('fm_backup_snooze', null); render(); }
+function backupLine() {
+  if (!S.orders.length) return '';
+  const now = Date.now();
+  let at = Number(LS.get('fm_backup_at')) || 0;
+  if (!at) { // chưa sao lưu lần nào: tính từ đơn cũ nhất
+    S.orders.forEach(o => { const t = Date.parse(o.created || ''); if (t && (!at || t < at)) at = t; });
+    if (!at) return '';
+  }
+  const days = Math.floor((now - at) / DAY_MS), snooze = Number(LS.get('fm_backup_snooze')) || 0;
+  if (days < 7 || (snooze && now - snooze < DAY_MS)) return '';
+  return '<div class="notice" id="bkLine" role="status"><span>Đã <b class="num">' + days + '</b> ngày chưa sao lưu</span>' +
+    '<span style="display:flex;gap:6px"><button class="btn sm" type="button" data-act="backup-open">Sao lưu ngay</button>' +
+    '<button class="btn sm ghost" type="button" data-act="bk-later" aria-label="Ẩn nhắc sao lưu hôm nay" title="Ẩn đến mai" style="padding:0 12px">Ẩn</button></span></div>';
+}
 function hasData() {
   if (S.orders.length || S.flowers.length) return true;
   toast('Chưa có đơn nào để sao lưu'); return false;
@@ -938,7 +1062,7 @@ async function downloadBackup() {
   let dl = null;
   try { dl = window.claude && await window.claude.use('downloads'); } catch (e) { dl = null; }
   if (dl) {
-    try { await dl.save({ filename, data: text }); toast('Đã lưu file sao lưu'); }
+    try { await dl.save({ filename, data: text }); markBackup(); toast('Đã lưu file sao lưu'); }
     catch (e) { toast(e && e.code === 'declined' ? 'Chưa lưu file. Bạn có thể bấm Sao chép dữ liệu.' : 'Không tải được file, hãy bấm Sao chép dữ liệu'); }
     return;
   }
@@ -946,6 +1070,7 @@ async function downloadBackup() {
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
+    markBackup();
     toast('Đang tải file sao lưu. Nếu không thấy file, bấm Sao chép dữ liệu.');
   } catch (e) { copyBackup(); }
 }
@@ -954,7 +1079,7 @@ async function copyBackup() {
   // chế độ server: sao chép bản đầy đủ (kèm ảnh) giống file tải về, để khôi phục được ở bất kỳ đâu
   const t = (S.mode === 'db' && window.bloomExportText) ? await window.bloomExportText().catch(() => backupText()) : backupText();
   const manual = () => { const b = $('#bkText'); if (b) { b.value = t; b.focus(); b.select(); } toast('Giữ vào ô bên dưới rồi chọn Sao chép'); };
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(() => toast('Đã sao chép. Dán vào Ghi chú hoặc Zalo để giữ.'), manual);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(() => { markBackup(); toast('Đã sao chép. Dán vào Ghi chú hoặc Zalo để giữ.'); }, manual);
   else manual();
 }
 
@@ -978,7 +1103,7 @@ function cleanFlower(f) {
 }
 async function bulkSave(col, items) {
   items.forEach(item => { const i = S[col].findIndex(x => x.id === item.id); if (i >= 0) S[col][i] = item; else S[col].push(item); });
-  dismissDemo(); onChange();
+  onChange();
   if (S.mode === 'db' && S.db) { for (const item of items) await S.db.collection(col).doc(item.id).set(item); }
   else if (!(await localWrite(col, items))) throw new Error('storage full');
 }
@@ -1004,13 +1129,15 @@ function handleBackupFile(file) {
 }
 /* ---------- actions ---------- */
 async function setStatus(id, k) {
-  if (guardDemo()) return;
   const o = findOrder(id); if (!o || o.status === k) return;
+  const before = o.status;
   const ok = await saveItem('orders', { ...o, status: k });
-  if (ok) toast('Đã chuyển sang ' + ST[k].n);
+  if (ok) toast('Đã chuyển sang ' + ST[k].n, async () => {
+    const cur = findOrder(id); if (!cur) return;
+    if (await saveItem('orders', { ...cur, status: before })) toast('Đã hoàn tác · ' + ST[before].n);
+  });
 }
 async function setPaid(id, v) {
-  if (guardDemo()) return;
   const o = findOrder(id); if (!o) return;
   const ok = await saveItem('orders', { ...o, paid: v });
   if (ok) toast(v ? 'Đã đánh dấu thu đủ' : 'Đã bỏ đánh dấu thu đủ');
@@ -1028,20 +1155,23 @@ document.addEventListener('click', async e => {
   const bk = t.closest('[data-back]');
   if (bk) { e.stopPropagation(); const o = findOrder(bk.dataset.back); const pv = o && prevStatusOf(o); if (pv) setStatus(o.id, pv); return; }
   const open = t.closest('[data-open]'); if (open) { openDetail(open.dataset.open); return; }
-  const tab = t.closest('[data-tab]'); if (tab) { V.tab = tab.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  const tab = t.closest('[data-tab]'); if (tab) { V.tab = tab.dataset.tab; saveUi(); render(); window.scrollTo(0, 0); return; }
   const dd = t.closest('[data-date]'); if (dd) { const n = Number(dd.dataset.date); V.date = n === 0 ? TODAY : addDays(V.date, n); render(); return; }
-  const fl = t.closest('[data-filter]'); if (fl) { V.filter = fl.dataset.filter; render(); return; }
+  const fl = t.closest('[data-filter]'); if (fl) { V.filter = fl.dataset.filter; saveUi(); render(); return; }
   const so = t.closest('[data-sort]'); if (so) { V.sort = so.dataset.sort; render(); return; }
   const rg = t.closest('[data-range]'); if (rg) { V.range = rg.dataset.range; render(); return; }
   const wb = t.closest('[data-week]'); if (wb) { V.week = Number(wb.dataset.week); render(); return; }
   const cu = t.closest('[data-cust]'); if (cu) { customerSheet(cu.dataset.cust); return; }
-  const fw = t.closest('[data-flower]'); if (fw) { if (guardDemo()) return; setSheet(flowerForm(S.flowers.find(f => f.id === fw.dataset.flower)), 'form'); return; }
+  const fw = t.closest('[data-flower]'); if (fw) { setSheet(flowerForm(S.flowers.find(f => f.id === fw.dataset.flower)), 'form'); return; }
   const ss = t.closest('[data-setstatus]'); if (ss) { setStatus(openOrderId, ss.dataset.setstatus); return; }
   const cp = t.closest('[data-copy]'); if (cp) { copyText(cp.dataset.copy); return; }
   const xp = t.closest('[data-xpick]');
-  if (xp) { const f = visible().flowers.find(x => x.id === xp.dataset.xpick), n = xp.dataset.n; if (f) { $('#xName' + n).value = f.name; $('#xPrice' + n).value = vnd(f.price); formDirty = true; updateTotal(); } return; }
+  if (xp) { const f = visible().flowers.find(x => x.id === xp.dataset.xpick), n = xp.dataset.n; if (f) { $('#xName' + n).value = f.name; $('#xPrice' + n).value = vnd(f.price); syncHint($('#xPrice' + n)); formDirty = true; updateTotal(); } return; }
+  const sg = t.closest('[data-sug]'); if (sg) { applyCustomer(Number(sg.dataset.sug)); return; }
+  const dc = t.closest('[data-dchip]');
+  if (dc) { const d = $('#fDate'); if (d) { d.value = addDays(TODAY, Number(dc.dataset.dchip)); formDirty = true; syncDateChips(); } return; }
   const pk = t.closest('[data-pick]');
-  if (pk) { const f = visible().flowers.find(x => x.id === pk.dataset.pick); if (f) { $('#fName').value = f.name; $('#fPrice').value = vnd(f.price); formDirty = true; updateTotal(); } return; }
+  if (pk) { const f = visible().flowers.find(x => x.id === pk.dataset.pick); if (f) { $('#fName').value = f.name; $('#fPrice').value = vnd(f.price); syncHint($('#fPrice')); formDirty = true; updateTotal(); } return; }
   const a = t.closest('[data-act]'); if (!a) return;
   const act = a.dataset.act;
   if (act === 'close') {
@@ -1050,10 +1180,11 @@ document.addEventListener('click', async e => {
     if (formDirty && $('#orderForm, #flowerForm') && !confirm('Bạn chưa lưu. Đóng và bỏ những gì vừa nhập?')) return;
     setSheet('');
   }
-  else if (act === 'clear-demo') { dismissDemo(); render(); toast('Đã xóa dữ liệu mẫu'); }
-  else if (act === 'edit') { if (guardDemo()) return; setSheet(orderForm(findOrder(openOrderId)), 'form'); }
-  else if (act === 'del') { if (guardDemo()) return; confirmDel = true; refreshDetail(); }
-  else if (act === 'del-yes') { const id = openOrderId; setSheet(''); await removeItem('orders', id); toast('Đã xóa đơn'); }
+  else if (act === 'edit') { setSheet(orderForm(findOrder(openOrderId)), 'form'); }
+  else if (act === 'del') { confirmDel = true; refreshDetail(); }
+  else if (act === 'del-yes') { const id = openOrderId; setSheet(''); removeItem('orders', id, 'Đã xóa đơn'); }
+  else if (act === 'undo') runUndo();
+  else if (act === 'bk-later') { LS.set('fm_backup_snooze', Date.now()); render(); }
   else if (act === 'paid-yes') setPaid(openOrderId, true);
   else if (act === 'paid-no') setPaid(openOrderId, false);
   else if (act === 'slip') copySlip();
@@ -1076,7 +1207,7 @@ document.addEventListener('click', async e => {
   else if (act === 'rm-ximg') { const n = a.dataset.n; delete extraImages[n]; const t = $('#xThumb' + n); if (t) t.innerHTML = I.img; }
   else if (act === 'rm-img') { formImage = ''; $('#fThumb').innerHTML = I.img; }
   else if (act === 'new-flower') { setSheet(flowerForm(), 'form'); }
-  else if (act === 'del-flower') { const id = $('#flowerForm').dataset.id; setSheet(''); await removeItem('flowers', id); toast('Đã xóa mẫu hoa'); }
+  else if (act === 'del-flower') { const id = $('#flowerForm').dataset.id; setSheet(''); removeItem('flowers', id, 'Đã xóa mẫu hoa'); }
 });
 
 $('#fab').addEventListener('click', () => { setSheet(orderForm(), 'form'); });
@@ -1093,11 +1224,15 @@ document.addEventListener('input', e => {
     const l = $('#ordList'); if (l) l.innerHTML = ordersListHtml();
     const c = $('#ordCount'); if (c) c.textContent = lastCount + ' đơn';
   }
+  if (MONEY_IDS.test(id)) syncHint(e.target);
   if (id === 'fPrice' || id === 'fQty' || id === 'fShip' || id === 'fDisc' || /^xPrice/.test(id)) updateTotal();
+  if (id === 'fPhone' || id === 'fCust') suggestCustomers(id);
+  if (id === 'fDate') syncDateChips();
 });
 document.addEventListener('change', async e => {
   if (e.target.closest && e.target.closest('#orderForm, #flowerForm')) formDirty = true;
   if (e.target.id === 'dateIn' && e.target.value) { V.date = e.target.value; render(); }
+  if (e.target.id === 'fDate') syncDateChips();
   if (e.target.id === 'bkFile' && e.target.files[0]) { handleBackupFile(e.target.files[0]); e.target.value = ''; }
   const xm = /^xImg(\d+)$/.exec(e.target.id || '');
   if (xm && e.target.files[0]) {
@@ -1177,10 +1312,13 @@ syncThemeColor();
 
 /* tags like "Gấp" and "Quá hạn" depend on the clock: refresh each minute, never while a form or field is in use */
 setInterval(() => {
-  const t = ymd(new Date());
+  const t = vnNow().ymd;
   if (t !== TODAY) { if (V.date === TODAY) V.date = t; TODAY = t; }
   const a = document.activeElement;
-  if (!sheetKind && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) render();
+  if (!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) {
+    if (!sheetKind) render();
+    else if (sheetKind === 'detail' && openOrderId) refreshDetail();
+  }
 }, 60000);
 
 render();
