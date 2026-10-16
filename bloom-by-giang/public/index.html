@@ -595,7 +595,6 @@ function unitCard(u, rank) {
 const DONE = ['done', 'canceled'];
 const byTime = (a, b) => (a.date + (a.time || '99:99')).localeCompare(b.date + (b.time || '99:99'));
 const secTitle = (t, n) => '<div class="sec-title">' + t + ' <span class="num" style="color:var(--muted);font-weight:500">(' + n + ')</span></div>';
-const cards = list => '<div class="list">' + unitsOf(list).map(u => unitCard(u)).join('') + '</div>';
 function grouped(units) {
   let last = '', h = '';
   units.forEach(u => {
@@ -620,6 +619,7 @@ function viewToday() {
   const soon = isToday ? orders.filter(o => o.date > TODAY && o.date <= addDays(TODAY, 3) && (o.status === 'pending' || o.status === 'making')).sort(byTime) : [];
   const extra = overdue.length || soon.length;
   let r = 0; const rank = new Map(); const dayUnits = unitsOf(list);
+  const ov = takeUnits(unitsOf(overdue), overShow);
   dayUnits.forEach(u => { if (unitOpen(u) && r < 3) rank.set(u[0].id, ++r); });
   return '<div class="pagehead"><div><h1 class="h1">' + (isToday ? 'Hôm nay' : dayName(V.date)) + '</h1><div class="sub">' + dayName(V.date) + ', ' + dmy(V.date) + '</div></div></div>' +
     backupLine() +
@@ -632,7 +632,7 @@ function viewToday() {
     '<div class="stat"><div class="lbl">Cần làm</div><div class="val num">' + todo + '</div></div></div>' +
     (owe > 0 ? '<div class="sub" style="margin:-4px 2px 12px">Còn phải thu trong ngày: <b class="num" style="color:var(--ink)">' + money(owe) + '</b></div>' : '') +
     '<div class="chips" aria-label="Số đơn theo trạng thái">' + STATUS.map(s => '<span class="pill ' + s.c + '" style="min-height:30px">' + s.n + ' <b class="num">' + cnt(s.k) + '</b></span>').join('') + '</div>' +
-    (overdue.length ? secTitle('Chưa xong từ ngày trước', overdue.length) + cards(overdue) : '') +
+    (overdue.length ? secTitle('Chưa xong từ ngày trước', overdue.length) + '<div class="list">' + ov.units.map(u => unitCard(u)).join('') + '</div>' + moreBtn('more-overdue', overdue.length - ov.n) : '') +
     (extra && list.length ? secTitle('Đơn ' + (isToday ? 'hôm nay' : 'trong ngày'), list.length) : '') +
     (list.length ? '<div class="list">' + dayUnits.map(u => unitCard(u, rank.get(u[0].id))).join('') + '</div>' :'<div class="empty"><b>Chưa có đơn nào trong ngày này</b>Bấm “Đơn mới” để ghi đơn đầu tiên.</div>') +
     (soon.length ? secTitle('Đặt trước, sắp tới trong 3 ngày', soon.length) + '<div class="list">' + grouped(unitsOf(soon)) + '</div>' : '');
@@ -640,6 +640,15 @@ function viewToday() {
 
 /* ---------- Đơn hàng ---------- */
 let lastCount = 0;
+/* nhiều đơn: chỉ vẽ trước 50 đơn, bấm "Xem thêm" để hiện tiếp; số đếm, cảnh báo vẫn tính trên tất cả đơn */
+const PAGE = 50;
+let ordShow = PAGE, ordKey = '', overShow = PAGE;
+function takeUnits(units, budget) {
+  const out = []; let n = 0;
+  for (const u of units) { if (n >= budget) break; out.push(u); n += u.length; }
+  return { units: out, n };
+}
+const moreBtn = (act, rest) => rest > 0 ? '<div style="display:flex;justify-content:center;margin:14px 0 4px"><button class="btn" type="button" data-act="' + act + '">Xem thêm (còn ' + rest + ' đơn)</button></div>' : '';
 const foldCache = new WeakMap();
 function searchText(o) {
   const raw = [o.name, o.customer, o.phone, o.note, o.address].join(' ');
@@ -654,21 +663,25 @@ function ordersListHtml() {
   // không dấu, không phân biệt hoa thường; gõ số thì so cả SĐT bỏ khoảng trắng/dấu chấm
   if (q) list = list.filter(o => searchText(o).includes(q) || (qd.length >= 3 && digits(o.phone).includes(qd)));
   lastCount = list.length;
+  const key = V.filter + '|' + V.sort + '|' + q;
+  if (key !== ordKey) { ordKey = key; ordShow = PAGE; }
   if (!list.length) return '<div class="empty"><b>Không có đơn phù hợp</b>Thử đổi bộ lọc hoặc từ khóa.</div>';
   if (V.sort === 'new') {
     const l = list.slice().sort((a, b) => (b.created || '').localeCompare(a.created || ''));
     let last = '', h = '<div class="list">';
-    unitsOf(l).forEach(u => { const c = createdYmd(u[0]); if (c !== last) { last = c; h += '<div class="daylabel">Tạo ngày ' + dmy(c) + '</div>'; } h += unitCard(u); });
-    return h + '</div>';
+    const pg = takeUnits(unitsOf(l), ordShow);
+    pg.units.forEach(u => { const c = createdYmd(u[0]); if (c !== last) { last = c; h += '<div class="daylabel">Tạo ngày ' + dmy(c) + '</div>'; } h += unitCard(u); });
+    return h + '</div>' + moreBtn('more-orders', list.length - pg.n);
   }
   const units = unitsOf(list.slice().sort(byTime));
   const act = units.filter(unitOpen);
   const fin = units.filter(u => !unitOpen(u)).reverse();
   const cnt = us => us.reduce((s, u) => s + u.length, 0);
   let h = '';
-  if (act.length) h += secTitle('Cần xử lý, giao sớm nhất trước', cnt(act)) + '<div class="list">' + grouped(act) + '</div>';
-  if (fin.length) h += secTitle('Đã giao hoặc đã huỷ', cnt(fin)) + '<div class="list">' + grouped(fin) + '</div>';
-  return h;
+  const pa = takeUnits(act, ordShow), pf = takeUnits(fin, ordShow - pa.n);
+  if (pa.units.length) h += secTitle('Cần xử lý, giao sớm nhất trước', cnt(act)) + '<div class="list">' + grouped(pa.units) + '</div>';
+  if (pf.units.length) h += secTitle('Đã giao hoặc đã huỷ', cnt(fin)) + '<div class="list">' + grouped(pf.units) + '</div>';
+  return h + moreBtn('more-orders', list.length - pa.n - pf.n);
 }
 
 function viewOrders() {
@@ -784,7 +797,7 @@ function render() {
   if (!same) { $('#view').innerHTML = html; lastViewHtml = html; viewMO.takeRecords(); }
   $('#tabs').innerHTML = TABS.map(t => '<button class="tab" type="button" data-tab="' + t.k + '"' + (V.tab === t.k ? ' aria-current="page"' : '') + '>' + t.i + t.n + '</button>').join('');
   $('#fab').hidden = !(V.tab === 'today' || V.tab === 'orders');
-  $('#storeline').textContent = isLoading() ? 'Đang kết nối máy chủ...' : S.mode === 'db' ? 'Dữ liệu dùng chung, tự lưu' : 'Lưu trên thiết bị này';
+  const sl = $('#storeline'); sl.textContent = isLoading() ? 'Đang kết nối máy chủ...' : ''; sl.hidden = !isLoading();
   if (keep && !same) { const q = $('#qIn'); q.focus(); try { q.setSelectionRange(pos, pos); } catch (e) {} }
 }
 onChange = () => { render(); if (sheetKind === 'detail' && openOrderId) refreshDetail(); };
@@ -1169,7 +1182,7 @@ document.addEventListener('click', async e => {
   const bk = t.closest('[data-back]');
   if (bk) { e.stopPropagation(); const o = findOrder(bk.dataset.back); const pv = o && prevStatusOf(o); if (pv) setStatus(o.id, pv); return; }
   const open = t.closest('[data-open]'); if (open) { openDetail(open.dataset.open); return; }
-  const tab = t.closest('[data-tab]'); if (tab) { V.tab = tab.dataset.tab; saveUi(); render(); window.scrollTo(0, 0); return; }
+  const tab = t.closest('[data-tab]'); if (tab) { if (V.tab !== tab.dataset.tab) { ordShow = PAGE; overShow = PAGE; } V.tab = tab.dataset.tab; saveUi(); render(); window.scrollTo(0, 0); return; }
   const dd = t.closest('[data-date]'); if (dd) { const n = Number(dd.dataset.date); V.date = n === 0 ? TODAY : addDays(V.date, n); render(); return; }
   const fl = t.closest('[data-filter]'); if (fl) { V.filter = fl.dataset.filter; saveUi(); render(); return; }
   const so = t.closest('[data-sort]'); if (so) { V.sort = so.dataset.sort; render(); return; }
@@ -1198,6 +1211,8 @@ document.addEventListener('click', async e => {
   else if (act === 'del') { confirmDel = true; refreshDetail(); }
   else if (act === 'del-yes') { const id = openOrderId; setSheet(''); removeItem('orders', id, 'Đã xóa đơn'); }
   else if (act === 'undo') runUndo();
+  else if (act === 'more-orders') { ordShow += PAGE; applySearch(); }
+  else if (act === 'more-overdue') { overShow += PAGE; render(); }
   else if (act === 'bk-later') { LS.set('fm_backup_snooze', Date.now()); render(); }
   else if (act === 'paid-yes') setPaid(openOrderId, true);
   else if (act === 'paid-no') setPaid(openOrderId, false);
