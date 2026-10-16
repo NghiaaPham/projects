@@ -9,7 +9,9 @@ Nhiều máy (điện thoại chủ shop, máy nhân viên) đăng nhập cùng 
 - Helmet (CSP, header bảo mật), giới hạn dò mật khẩu theo IP, CORS theo danh sách domain
 - Cấu hình 100% qua biến môi trường, thiếu biến bắt buộc là server dừng ngay khi khởi động
 - Health check có kiểm tra database, tắt server êm (SIGTERM), log JSON
-- Dockerfile, GitHub Actions CI (test + npm audit)
+- Ảnh đơn tách bảng `images` (đơn chỉ giữ đường dẫn), danh sách tải nhẹ; dữ liệu cũ có ảnh nhúng tự chuyển khi khởi động
+- Sao lưu đầy đủ kèm ảnh: nút "Tải file sao lưu" trong app hoặc `GET /api/export`
+- Dockerfile, GitHub Actions CI (test trên pg-mem + PostgreSQL 16 thật, npm audit)
 
 ## Biến môi trường
 Xem đầy đủ trong `.env.example`. Bắt buộc:
@@ -40,7 +42,8 @@ npm start                 # tự tạo bảng ở lần chạy đầu
 
 ## Test
 ```bash
-npm test
+npm test                                            # Postgres giả trong bộ nhớ
+TEST_DATABASE_URL=postgresql://... npm test         # chạy trên Postgres thật
 ```
 
 ## Deploy
@@ -69,6 +72,9 @@ Tất cả route `/api/*` (trừ login/health) cần header `Authorization: Bear
 | GET | `/api/flowers` | Danh mục mẫu hoa |
 | PUT | `/api/flowers/:id` | Thêm / sửa mẫu hoa |
 | DELETE | `/api/flowers/:id` | Xóa mẫu hoa |
+| GET | `/api/images/:key` | Ảnh đơn (khoá ngẫu nhiên 128-bit, không cần token) |
+| GET | `/api/export` | Bản sao lưu đầy đủ kèm ảnh |
+| GET | `/api/config` | Cấu hình cho giao diện (chu kỳ đồng bộ) |
 
 ## Cấu trúc
 ```
