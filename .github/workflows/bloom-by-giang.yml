@@ -1,0 +1,22 @@
+name: bloom-by-giang CI
+on:
+  push:
+    paths: ['bloom-by-giang/**', '.github/workflows/bloom-by-giang.yml']
+  pull_request:
+    paths: ['bloom-by-giang/**']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bloom-by-giang
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bloom-by-giang/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
