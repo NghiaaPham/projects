@@ -7,13 +7,19 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test test/*.test.js"
+    "dev:memory": "node dev-memory.js",
+    "test": "node --test test/*.test.js",
+    "hash-password": "node scripts/hash-password.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.0"
   },
