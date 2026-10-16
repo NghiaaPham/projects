@@ -41,6 +41,14 @@ function createApp(cfg, store) {
     try { await store.ping(); res.json({ ok: true }); }
     catch { res.status(503).json({ ok: false }); }
   });
+  // Ảnh: khoá ngẫu nhiên 128-bit không đoán được, nội dung không đổi nên cache lâu
+  app.get('/api/images/:key', async (req, res, next) => {
+    try {
+      const img = await store.getImage(req.params.key);
+      if (!img) return res.status(404).end();
+      res.set('Content-Type', img.mime).set('Cache-Control', 'private, max-age=31536000, immutable').send(Buffer.from(img.data));
+    } catch (e) { next(e); }
+  });
   app.get('/api/config', (req, res) => res.json({ pollMs: cfg.clientPollMs }));
 
   const loginLimiter = rateLimit({
@@ -55,6 +63,12 @@ function createApp(cfg, store) {
 
   const api = express.Router();
   api.use(requireAuth);
+  api.get('/export', async (req, res, next) => {
+    try {
+      res.set('Content-Disposition', `attachment; filename="bloom-backup-${new Date().toISOString().slice(0, 10)}.json"`);
+      res.json(await store.exportAll());
+    } catch (e) { next(e); }
+  });
   api.param('col', (req, res, next, col) => COLS[col] ? next() : res.status(404).json({ error: 'Không có bảng này' }));
   api.param('id', (req, res, next, id) => ID_RE.test(id) ? next() : res.status(400).json({ error: 'ID không hợp lệ' }));
   api.get('/:col', async (req, res, next) => {
@@ -63,7 +77,7 @@ function createApp(cfg, store) {
   api.put('/:col/:id', async (req, res, next) => {
     const err = validate(req.params.col, req.body);
     if (err) return res.status(400).json({ error: err });
-    try { await store.upsert(req.params.col, req.params.id, req.body); res.json({ ok: true }); } catch (e) { next(e); }
+    try { res.json(await store.upsert(req.params.col, req.params.id, req.body)); } catch (e) { next(e); }
   });
   api.delete('/:col/:id', async (req, res, next) => {
     try { res.json({ ok: await store.remove(req.params.col, req.params.id) }); } catch (e) { next(e); }
