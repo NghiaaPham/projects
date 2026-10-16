@@ -313,34 +313,6 @@ const ST = Object.fromEntries(STATUS.map(s => [s.k, s]));
 const FLOW = ['pending', 'making', 'shipping', 'done'];
 const CHANNELS = ['Instagram', 'Threads', 'TikTok'];
 
-/* ---------- sample data (only shown until the shop saves its first order) ---------- */
-function sampleData() {
-  const o = (id, name, customer, phone, channel, off, time, price, deposit, status, note, address) =>
-    ({ id, name, customer, phone, channel, date: addDays(TODAY, off), time, price, deposit, status, note, address, image: '', created: new Date().toISOString(), qty: 1, ship: 0, discount: 0, paid: false, sample: true });
-  const back = n => new Date(Date.now() - n * 86400000).toISOString();
-  const out = {
-    orders: [
-      o('s1', 'Hoa sophia mix phăng chùm', 'Linh (@line2112)', '0901 234 567', 'TikTok', 0, '11:00', 480000, 200000, 'pending', 'Chúc mẹ luôn khỏe và thật nhiều niềm vui. Con yêu mẹ!', '24 Nguyễn Trãi, Thanh Xuân, Hà Nội'),
-      o('s2', 'Hoa ly mix', 'Trường Giang', '0912 888 000', 'Instagram', 0, '15:30', 650000, 300000, 'making', 'Chúc mừng sinh nhật em', '12 Láng Hạ, Đống Đa, Hà Nội'),
-      o('s3', 'Bó hồng đỏ 20 bông', 'Minh Anh', '0988 111 222', 'Threads', 0, '08:30', 790000, 790000, 'shipping', 'Anh xin lỗi em. Mình đi ăn tối nhé?', '88 Cầu Giấy, Hà Nội'),
-      o('s4', 'Hoa cúc mini', 'Chị Hà', '0977 345 678', 'Instagram', -1, '10:00', 220000, 220000, 'done', '', ''),
-      o('s5', 'Lẵng hoa khai trương', 'Anh Tuấn', '0966 000 123', 'TikTok', -2, '09:00', 1200000, 600000, 'done', 'Chúc anh chị khai trương hồng phát', '5 Phố Huế, Hai Bà Trưng'),
-      o('s6', 'Hoa tulip mix', 'Thu Trang', '0933 456 789', 'Instagram', 1, '16:00', 520000, 0, 'pending', 'Happy anniversary!', '31 Trần Duy Hưng, Cầu Giấy')
-    ],
-    flowers: [
-      { id: 'f1', name: 'Hoa sophia mix phăng chùm', price: 480000 },
-      { id: 'f2', name: 'Hoa ly mix', price: 650000 },
-      { id: 'f3', name: 'Bó hồng đỏ 20 bông', price: 790000 },
-      { id: 'f4', name: 'Hoa tulip mix', price: 520000 },
-      { id: 'f5', name: 'Hoa cúc mini', price: 220000 }
-    ]
-  };
-  const by = id => out.orders.find(x => x.id === id);
-  by('s1').created = back(3); by('s2').created = back(1); by('s6').created = back(5);
-  by('s3').paid = true; by('s4').paid = true; by('s5').ship = 50000; by('s6').discount = 20000; by('s2').qty = 1;
-  return out;
-}
-
 /* ---------- storage: shared db when this viewer has it, otherwise this browser ---------- */
 const S = { orders: [], flowers: [], mode: 'local', ready: false, demoOff: false, db: null };
 const LS = {
@@ -410,11 +382,9 @@ async function hydrateImages() {
 }
 let onChange = () => {};
 
-function useDemo() { return !S.demoOff && !S.orders.length && !S.flowers.length; }
-function visible() {
-  if (useDemo()) { const d = sampleData(); return { orders: d.orders, flowers: d.flowers, demo: true }; }
-  return { orders: S.orders, flowers: S.flowers, demo: false };
-}
+// Dữ liệu chỉ lấy từ database (hoặc bộ nhớ trình duyệt khi chạy file lẻ), không có dữ liệu mẫu
+function useDemo() { return false; }
+function visible() { return { orders: S.orders, flowers: S.flowers, demo: false }; }
 function dismissDemo() { S.demoOff = true; LS.set('fm_demo_off', 1); }
 
 /* optimistic save: show the change at once, put things back if the save fails */
@@ -451,28 +421,21 @@ async function removeItem(col, id) {
 }
 
 async function initStore() {
-  S.demoOff = !!LS.get('fm_demo_off');
-  S.orders = LS.get(lsKey.orders) || [];
-  S.flowers = LS.get(lsKey.flowers) || [];
-  S.ready = true; onChange();
   let db = null;
   try { db = window.claude && await window.claude.use('db'); } catch (e) { db = null; }
-  if (!db) { hydrateImages(); return; }
-  S.db = db; S.mode = 'db';
+  if (!db) {
+    // chạy file lẻ không có server: dùng bộ nhớ trình duyệt
+    S.orders = LS.get(lsKey.orders) || [];
+    S.flowers = LS.get(lsKey.flowers) || [];
+    S.ready = true; onChange(); hydrateImages(); return;
+  }
+  // có server: chỉ hiển thị dữ liệu database trả về
+  S.db = db; S.mode = 'db'; S.orders = []; S.flowers = [];
   const sub = (col) => db.collection(col).onSnapshot(snap => {
     S[col] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (S[col].length) S.demoOff = true;
     S.ready = true; onChange();
-  }, () => { S.mode = 'local'; S.db = null; onChange(); });
+  }, () => { toast('Mất kết nối server, đang thử lại'); });
   sub('orders'); sub('flowers');
-  // bring over anything this browser saved before shared storage was available
-  const lo = LS.get(lsKey.orders) || [], lf = LS.get(lsKey.flowers) || [];
-  if (lo.length || lf.length) {
-    try {
-      await Promise.all([...lo.map(x => db.collection('orders').doc(x.id).set(x)), ...lf.map(x => db.collection('flowers').doc(x.id).set(x))]);
-      LS.set(lsKey.orders, []); LS.set(lsKey.flowers, []);
-    } catch (e) { /* keep local copy */ }
-  }
 }
 
 /* ---------- derived ---------- */
@@ -540,8 +503,8 @@ const IN_APP = /FBAN|FBAV|FB_IAB|Messenger|Instagram|Zalo|Line\/|MicroMessenger/
 function iabBanner() {
   return IN_APP ? '<div class="notice"><span>Bạn đang mở trong trình duyệt của Messenger/Facebook. Dữ liệu ở đây dễ bị mất. Hãy bấm dấu ... rồi chọn Mở bằng Safari (hoặc Chrome) và dùng ở đó.</span></div>' : '';
 }
-function demoBanner(demo) {
-  return demo ? '<div class="notice"><span>Đang xem dữ liệu mẫu. Thêm đơn đầu tiên là dữ liệu mẫu tự biến mất.</span><button class="btn sm" type="button" data-act="clear-demo">Bắt đầu trống</button></div>' : '';
+function demoBanner() {
+  return '';
 }
 
 
