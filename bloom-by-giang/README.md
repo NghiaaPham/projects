@@ -12,6 +12,10 @@ Nhiều máy (điện thoại chủ shop, máy nhân viên) đăng nhập cùng 
 - Ảnh đơn tách bảng `images` (đơn chỉ giữ đường dẫn), danh sách tải nhẹ; dữ liệu cũ có ảnh nhúng tự chuyển khi khởi động
 - Sao lưu đầy đủ kèm ảnh: nút "Tải file sao lưu" trong app hoặc `GET /api/export`
 - Dockerfile, GitHub Actions CI (test trên pg-mem + PostgreSQL 16 thật, npm audit)
+- Tải nhanh: nén gzip/brotli; `index.html` luôn hỏi lại server (ETag, không bao giờ dùng giao diện cũ);
+  `api-adapter.js` và logo được gắn `?v=<hash>` tự động nên cache 1 năm; icon 30 ngày, manifest 7 ngày
+- Đồng bộ 15 giây dùng ETag: dữ liệu không đổi thì server trả `304` rỗng, giao diện không vẽ lại; tạm dừng khi ẩn app
+- Workflow `bloom-by-giang keepalive` gọi `/api/health` mỗi 10 phút từ 06:00 đến 22:00 giờ VN để Render free không ngủ trong giờ bán
 
 ## Biến môi trường
 Xem đầy đủ trong `.env.example`. Bắt buộc:
@@ -48,7 +52,7 @@ TEST_DATABASE_URL=postgresql://... npm test         # chạy trên Postgres th�
 
 ## Deploy
 **Render (free):** New → Blueprint → chọn repo (có `render.yaml` ở gốc), điền `DATABASE_URL`, `SHOP_PASSWORD_HASH`; `JWT_SECRET` Render tự sinh.
-Render free ngủ sau 15 phút không dùng, lần mở đầu chờ khoảng 30–50 giây.
+Render free ngủ sau 15 phút không dùng, lần mở đầu chờ khoảng 30–60 giây (ngoài giờ keepalive).
 
 **Docker:**
 ```bash
@@ -66,7 +70,7 @@ Tất cả route `/api/*` (trừ login/health) cần header `Authorization: Bear
 |---|---|---|
 | POST | `/api/login` | `{ "password": "..." }` → `{ "token": "..." }` |
 | GET | `/api/health` | Kiểm tra server |
-| GET | `/api/orders` | Danh sách đơn |
+| GET | `/api/orders` | Danh sách đơn (gửi `If-None-Match` để nhận `304` khi không đổi) |
 | PUT | `/api/orders/:id` | Thêm / sửa đơn |
 | DELETE | `/api/orders/:id` | Xóa đơn |
 | GET | `/api/flowers` | Danh mục mẫu hoa |

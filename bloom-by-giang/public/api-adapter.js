@@ -26,16 +26,35 @@
     return res.json();
   }
 
+  // Đọc danh sách kèm If-None-Match: server trả 304 rỗng khi dữ liệu không đổi (poll 15 giây gần như không tốn gì)
+  const last = { orders: null, flowers: null }; // { tag, items }
+  async function list(col) {
+    const prev = last[col];
+    const headers = { Authorization: 'Bearer ' + getToken() };
+    if (prev && prev.tag) headers['If-None-Match'] = prev.tag;
+    // lần đầu của trang: để trình duyệt tự hỏi lại bằng bản trong cache (mở lại app không tải lại cả danh sách);
+    // các lần sau tự gửi If-None-Match và tự xử lý 304
+    const res = await fetch(API + '/' + col, prev ? { headers, cache: 'no-store' } : { headers });
+    if (res.status === 401) { localStorage.removeItem(TOKEN_KEY); location.reload(); throw new Error('unauthorized'); }
+    // 304: vẫn đọc hết phần thân (rỗng), không thì trình duyệt huỷ request và báo ERR_ABORTED
+    if (res.status === 304 && prev) { await res.text().catch(() => {}); return prev; }
+    if (!res.ok) throw new Error('http_' + res.status);
+    const items = await res.json();
+    return (last[col] = { tag: res.headers.get('ETag'), items });
+  }
+
   const listeners = { orders: new Set(), flowers: new Set() };
   const fails = { orders: 0, flowers: 0 }, retry = {};
   async function refresh(col) {
     if (!listeners[col].size) return;
     clearTimeout(retry[col]);
     try {
-      const items = await call('GET', '/' + col);
+      const cur = await list(col);
+      const recovered = fails[col] > 0;
       fails[col] = 0;
-      const snap = { docs: items.map(x => ({ id: x.id, data: () => x })) };
-      listeners[col].forEach(l => l.next(snap));
+      const snap = { docs: cur.items.map(x => ({ id: x.id, data: () => x })) };
+      // chỉ báo cho giao diện khi có dữ liệu mới (hoặc vừa hết lỗi mạng), tránh vẽ lại cả nghìn đơn mỗi 15 giây
+      listeners[col].forEach(l => { if (recovered || l.seen !== cur) { l.seen = cur; l.next(snap); } });
     } catch (e) {
       // lỗi mạng / máy chủ đang dậy: thử lại sớm (3s, 6s, 12s...) thay vì chờ tới lượt kiểm tra sau
       fails[col]++;
@@ -53,7 +72,11 @@
   fetch(API + '/config').then(r => r.ok ? r.json() : null)
     .then(c => { if (c && Number(c.pollMs) >= 2000) pollMs = Number(c.pollMs); })
     .catch(() => {}).finally(startPolling);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh('orders'); refresh('flowers'); } });
+  // quay lại app (mở màn hình, chuyển tab/cửa sổ): kiểm tra ngay, không đợi lượt poll
+  let lastWake = 0;
+  const wake = () => { if (document.hidden || Date.now() - lastWake < 2000) return; lastWake = Date.now(); refresh('orders'); refresh('flowers'); };
+  document.addEventListener('visibilitychange', wake);
+  window.addEventListener('focus', wake);
 
   const db = {
     collection(col) {

@@ -136,3 +136,57 @@ test('migrate chuyển ảnh nhúng của dữ liệu cũ sang bảng images', a
   assert.ok(img && img.data.length > 0);
   await s2.close();
 });
+
+test('poll danh sách: không đổi thì 304 rỗng, có ghi thì 200 dữ liệu mới', async () => {
+  const auth = { Authorization: 'Bearer ' + token };
+  await request(app).put('/api/orders/e1').set(auth).send({ id: 'e1', name: 'Đơn ETag', date: '2026-10-16', status: 'pending' }).expect(200);
+  const a = await request(app).get('/api/orders').set(auth).expect(200);
+  const tag = a.headers.etag;
+  assert.ok(tag);
+  assert.match(a.headers['cache-control'], /no-cache/);
+  // trình duyệt (fetch cache:'no-store') gửi kèm Cache-Control/Pragma: no-cache, vẫn phải được 304
+  const b = await request(app).get('/api/orders').set(auth).set('If-None-Match', tag).set('Cache-Control', 'no-cache').set('Pragma', 'no-cache').expect(304);
+  assert.equal(b.text, '');
+  await request(app).put('/api/orders/e1').set(auth).send({ id: 'e1', name: 'Đơn ETag', date: '2026-10-16', status: 'done' }).expect(200);
+  const c = await request(app).get('/api/orders').set(auth).set('If-None-Match', tag).expect(200);
+  assert.equal(c.body.find(o => o.id === 'e1').status, 'done');
+  assert.notEqual(c.headers.etag, tag);
+  await request(app).delete('/api/orders/e1').set(auth).expect(200);
+  await request(app).get('/api/orders').set(auth).set('If-None-Match', c.headers.etag).expect(200);
+  // không có token thì vẫn 401, không lộ ETag
+  await request(app).get('/api/orders').set('If-None-Match', tag).expect(401);
+});
+
+test('nén gzip, index.html luôn hỏi lại (ETag/304), file có ?v= cache lâu', async () => {
+  const idx = await request(app).get('/').set('Accept-Encoding', 'gzip').expect(200);
+  assert.equal(idx.headers['content-encoding'], 'gzip');
+  assert.equal(idx.headers['cache-control'], 'no-cache');
+  const m = /src="api-adapter\.js\?v=([a-f0-9]{10})"/.exec(idx.text);
+  assert.ok(m, 'index.html phải gắn phiên bản cho api-adapter.js');
+  assert.match(idx.text, /src="icons\/logo\.jpg\?v=[a-f0-9]{10}"/);
+  await request(app).get('/').set('If-None-Match', idx.headers.etag).expect(304);
+  const js = await request(app).get('/api-adapter.js?v=' + m[1]).set('Accept-Encoding', 'gzip').expect(200);
+  assert.match(js.headers['cache-control'], /max-age=31536000, immutable/);
+  assert.equal(js.headers['content-encoding'], 'gzip');
+  const plain = await request(app).get('/api-adapter.js').expect(200);
+  assert.equal(plain.headers['cache-control'], 'no-cache');
+  assert.match((await request(app).get('/icons/icon-192.png').expect(200)).headers['cache-control'], /max-age=2592000/);
+  const mf = await request(app).get('/manifest.webmanifest').set('Accept-Encoding', 'gzip').expect(200);
+  assert.match(mf.headers['cache-control'], /max-age=604800/);
+  const h = await request(app).get('/api/health').expect(200);
+  assert.equal(h.headers['cache-control'], 'no-store');
+});
+
+test('phiên bản dữ liệu đổi khi có người sửa thẳng trong database', async () => {
+  const pool = await testPool();
+  const s2 = createStore(pool);
+  await s2.migrate();
+  const v0 = await s2.version('orders');
+  await pool.query('INSERT INTO orders (id, date, status, data) VALUES ($1, $2, $3, $4)',
+    ['ext1', '2026-10-01', 'done', JSON.stringify({ id: 'ext1', name: 'Thêm ngoài app', date: '2026-10-01' })]);
+  const v1 = await s2.version('orders');
+  assert.notEqual(v1, v0);
+  await pool.query('DELETE FROM orders WHERE id = $1', ['ext1']);
+  assert.notEqual(await s2.version('orders'), v1);
+  await s2.close();
+});

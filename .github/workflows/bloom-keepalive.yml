@@ -1,0 +1,29 @@
+# Giữ Bloom by Giang (Render free) thức trong giờ bán hàng để chủ shop không phải chờ ~1 phút khởi động.
+# 06:00–22:00 giờ Việt Nam (UTC+7) = 23:00–15:00 UTC. Mỗi 10 phút gọi /api/health (Render ngủ sau 15 phút không có request).
+# Thức ~16,3 giờ/ngày ≈ 505 giờ/tháng, dưới hạn 750 giờ/tháng của gói free cho một service.
+# Lưu ý: GitHub có thể chạy lịch trễ vài phút khi đông, và tự tắt lịch nếu repo không có hoạt động 60 ngày.
+name: bloom-by-giang keepalive
+on:
+  schedule:
+    - cron: '*/10 23 * * *'   # 06:00–06:50 VN
+    - cron: '*/10 0-14 * * *' # 07:00–21:50 VN
+    - cron: '0 15 * * *'      # 22:00 VN
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: bloom-keepalive
+  cancel-in-progress: false
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: GET /api/health
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 https://bloom-by-giang.onrender.com/api/health || true)
+            echo "lần $i: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "::warning::Bloom chưa trả lời /api/health"

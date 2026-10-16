@@ -3,6 +3,9 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const compression = require('compression');
 const { COLS } = require('./db');
 const { createAuth } = require('./auth');
 
@@ -15,9 +18,50 @@ function validate(col, item) {
   return null;
 }
 
+const PUBLIC = path.join(__dirname, '..', 'public');
+const hashOf = (buf) => crypto.createHash('sha1').update(buf).digest('hex');
+
+/* index.html phục vụ từ bộ nhớ: gắn ?v=<hash> vào file tĩnh để trình duyệt cache lâu mà không bao giờ dùng bản cũ.
+   Đọc lại khi file đổi (so mtime) nên sửa giao diện không cần khởi động lại. */
+const VERSIONED = ['api-adapter.js', 'icons/logo.jpg'];
+function indexPage() {
+  const files = ['index.html', ...VERSIONED].map(f => path.join(PUBLIC, f));
+  const stamp = files.map(f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join('|');
+  if (indexPage.cache && indexPage.cache.stamp === stamp) return indexPage.cache;
+  let html = fs.readFileSync(files[0], 'utf8');
+  for (const f of VERSIONED) {
+    let v; try { v = hashOf(fs.readFileSync(path.join(PUBLIC, f))).slice(0, 10); } catch { continue; }
+    html = html.split('src="' + f + '"').join('src="' + f + '?v=' + v + '"');
+  }
+  const body = Buffer.from(html);
+  indexPage.cache = { stamp, body, etag: '"' + hashOf(body) + '"' };
+  return indexPage.cache;
+}
+
+// Cache tĩnh: file có ?v= thì cache 1 năm; icon 30 ngày; manifest 7 ngày; còn lại luôn hỏi lại server (ETag)
+function staticCache(res, filePath) {
+  const rel = path.relative(PUBLIC, filePath).split(path.sep).join('/');
+  let cc = 'no-cache';
+  if (res.req && res.req.query && res.req.query.v) cc = 'public, max-age=31536000, immutable';
+  else if (rel.startsWith('icons/')) cc = 'public, max-age=2592000';
+  else if (rel === 'manifest.webmanifest') cc = 'public, max-age=604800';
+  res.setHeader('Cache-Control', cc);
+}
+
+// /api/health gọi rất thường (Render health check, keepalive): chỉ hỏi database tối đa 30 giây một lần
+function cheapPinger(store) {
+  let at = 0, p = null;
+  return () => {
+    if (Date.now() - at < 30000) return Promise.resolve();
+    if (!p) p = store.ping().then(() => { at = Date.now(); }).finally(() => { p = null; });
+    return p;
+  };
+}
+
 function createApp(cfg, store) {
   const app = express();
   const { login, requireAuth } = createAuth(cfg);
+  const cheapPing = cheapPinger(store);
   app.disable('x-powered-by');
   app.set('trust proxy', cfg.trustProxy);
 
@@ -35,11 +79,14 @@ function createApp(cfg, store) {
     },
   }));
   // CORS chỉ mở cho các domain khai báo trong CORS_ORIGINS; để trống = chỉ cùng domain
-  app.use(cors({ origin: cfg.corsOrigins.length ? cfg.corsOrigins : false }));
+  app.use(cors({ origin: cfg.corsOrigins.length ? cfg.corsOrigins : false, exposedHeaders: ['ETag'] }));
+  // nén gzip/brotli cho HTML, JS, JSON, manifest, SVG (ảnh JPEG/PNG đã nén sẵn nên bỏ qua)
+  app.use(compression({ filter: (req, res) => /webmanifest/.test(res.getHeader('Content-Type') || '') || compression.filter(req, res) }));
   app.use(express.json({ limit: cfg.bodyLimit }));
 
   app.get('/api/health', async (req, res) => {
-    try { await store.ping(); res.json({ ok: true }); }
+    res.set('Cache-Control', 'no-store');
+    try { await cheapPing(); res.json({ ok: true }); }
     catch { res.status(503).json({ ok: false }); }
   });
   // Ảnh: khoá ngẫu nhiên 128-bit không đoán được, nội dung không đổi nên cache lâu
@@ -72,8 +119,16 @@ function createApp(cfg, store) {
   });
   api.param('col', (req, res, next, col) => COLS[col] ? next() : res.status(404).json({ error: 'Không có bảng này' }));
   api.param('id', (req, res, next, id) => ID_RE.test(id) ? next() : res.status(400).json({ error: 'ID không hợp lệ' }));
+  // Polling 15 giây: client gửi If-None-Match, dữ liệu không đổi thì trả 304 rỗng, không đọc lại cả danh sách
   api.get('/:col', async (req, res, next) => {
-    try { res.json(await store.list(req.params.col)); } catch (e) { next(e); }
+    try {
+      const tag = 'W/"' + await store.version(req.params.col) + '"';
+      res.set('ETag', tag).set('Cache-Control', 'private, no-cache');
+      // so thẳng If-None-Match: fetch cache:'no-store' luôn gửi kèm Cache-Control: no-cache nên req.fresh không dùng được
+      const inm = String(req.headers['if-none-match'] || '').split(',').map(x => x.trim().replace(/^W\//, ''));
+      if (inm.includes(tag.replace(/^W\//, ''))) return res.status(304).end();
+      res.json(await store.list(req.params.col));
+    } catch (e) { next(e); }
   });
   api.put('/:col/:id', async (req, res, next) => {
     const err = validate(req.params.col, req.body);
@@ -86,7 +141,15 @@ function createApp(cfg, store) {
   app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Không tìm thấy' }));
 
-  app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: cfg.isProd ? '1h' : 0 }));
+  app.get(['/', '/index.html'], (req, res, next) => {
+    try {
+      const page = indexPage();
+      res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', ETag: page.etag });
+      if (req.fresh) return res.status(304).end();
+      res.send(page.body);
+    } catch (e) { next(e); }
+  });
+  app.use(express.static(PUBLIC, { cacheControl: false, setHeaders: staticCache }));
 
   app.use((err, req, res, next) => {
     if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Dữ liệu quá lớn' });

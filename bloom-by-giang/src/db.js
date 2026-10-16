@@ -15,6 +15,12 @@ const parse = (d) => (typeof d === 'string' ? JSON.parse(d) : d);
 
 /** Kho dữ liệu trên một Pool kiểu `pg` (Postgres thật, hoặc pg-mem khi test). */
 function createStore(pool) {
+  // Phiên bản dữ liệu cho ETag: đếm số lần ghi qua server này (kèm mã lần khởi động),
+  // cộng số dòng + updated_at mới nhất để vẫn nhận ra nếu ai đó sửa thẳng trong database.
+  const boot = crypto.randomBytes(4).toString('hex');
+  const writes = { orders: 0, flowers: 0 };
+  const bump = (col) => { writes[col]++; };
+
   async function tx(fn) {
     const client = await pool.connect();
     try {
@@ -69,7 +75,7 @@ function createStore(pool) {
     const { rows } = await pool.query('SELECT id, data FROM orders');
     for (const r of rows) {
       const d = parse(r.data);
-      if (typeof d.image === 'string' && d.image.startsWith('data:')) await tx(c => writeOrder(c, r.id, d));
+      if (typeof d.image === 'string' && d.image.startsWith('data:')) { await tx(c => writeOrder(c, r.id, d)); bump('orders'); }
     }
   }
 
@@ -79,22 +85,33 @@ function createStore(pool) {
     return rows.map(r => ({ ...parse(r.data), id: r.id }));
   }
 
+  // Gọi TRƯỚC khi đọc danh sách: nếu có ghi xen giữa, lần sau thẻ khác nên client tải lại, không bao giờ kẹt dữ liệu cũ
+  async function version(col) {
+    const { rows } = await pool.query(`SELECT count(*) AS n, max(updated_at) AS m FROM ${col}`);
+    const m = rows[0].m ? new Date(rows[0].m).getTime() : 0;
+    return `${boot}-${writes[col]}-${Number(rows[0].n)}-${m}`;
+  }
+
   async function upsert(col, id, item) {
-    if (col === 'orders') return tx(c => writeOrder(c, id, item));
-    const doc = { ...item, id };
-    await pool.query(
-      `INSERT INTO flowers (id, data, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-      [id, JSON.stringify(doc)]);
-    return doc;
+    try {
+      if (col === 'orders') return await tx(c => writeOrder(c, id, item));
+      const doc = { ...item, id };
+      await pool.query(
+        `INSERT INTO flowers (id, data, updated_at) VALUES ($1, $2, now())
+         ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+        [id, JSON.stringify(doc)]);
+      return doc;
+    } finally { bump(col); }
   }
 
   async function remove(col, id) {
-    return tx(async (c) => {
-      if (col === 'orders') await c.query('DELETE FROM images WHERE order_id = $1', [id]);
-      const r = await c.query(`DELETE FROM ${col} WHERE id = $1`, [id]);
-      return r.rowCount > 0;
-    });
+    try {
+      return await tx(async (c) => {
+        if (col === 'orders') await c.query('DELETE FROM images WHERE order_id = $1', [id]);
+        const r = await c.query(`DELETE FROM ${col} WHERE id = $1`, [id]);
+        return r.rowCount > 0;
+      });
+    } finally { bump(col); }
   }
 
   async function getImage(key) {
@@ -105,19 +122,22 @@ function createStore(pool) {
 
   // Bản sao lưu đầy đủ: ảnh nhúng lại dạng data URL để khôi phục được ở bất kỳ đâu
   async function exportAll() {
-    const [orders, flowers] = await Promise.all([list('orders'), list('flowers')]);
+    const [orders, flowers, imgs] = await Promise.all([list('orders'), list('flowers'),
+      pool.query('SELECT key, mime, data_b64 FROM images')]);
+    // một truy vấn cho tất cả ảnh thay vì mỗi đơn một truy vấn
+    const byKey = new Map(imgs.rows.map(r => [r.key, r]));
     for (const o of orders) {
       const key = keyFromUrl(o.image);
       if (!key) continue;
-      const img = await getImage(key);
-      o.image = img ? `data:${img.mime};base64,${img.data.toString('base64')}` : '';
+      const img = byKey.get(key);
+      o.image = img ? `data:${img.mime};base64,${Buffer.from(img.data_b64, 'base64').toString('base64')}` : '';
     }
     return { app: 'bloom-by-giang', version: 1, exportedAt: new Date().toISOString(), orders, flowers };
   }
 
   async function ping() { await pool.query('SELECT 1'); }
 
-  return { migrate, moveInlineImages, list, upsert, remove, getImage, exportAll, ping, close: () => pool.end() };
+  return { migrate, moveInlineImages, list, version, upsert, remove, getImage, exportAll, ping, close: () => pool.end() };
 }
 
 function createPgPool(cfg) {
