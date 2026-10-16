@@ -30,6 +30,7 @@ function createApp(cfg, store) {
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: ["'self'"],
+        manifestSrc: ["'self'"],     // manifest.webmanifest để cài app lên màn hình chính
       },
     },
   }));

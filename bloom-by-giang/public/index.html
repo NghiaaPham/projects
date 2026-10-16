@@ -3,6 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#F6F3EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#10181F" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Bloom">
+<meta name="application-name" content="Bloom">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 </head>
 <body>
@@ -1151,8 +1162,18 @@ $('#themeBtn').addEventListener('click', () => {
   const r = document.documentElement, dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
   r.dataset.theme = dark ? 'light' : 'dark';
   try { localStorage.setItem('fm_theme', r.dataset.theme); } catch (er) {}
+  syncThemeColor();
 });
 try { const th = localStorage.getItem('fm_theme'); if (th) document.documentElement.dataset.theme = th; } catch (er) {}
+/* màu thanh trạng thái khi cài lên màn hình chính: theo giao diện sáng/tối đang chọn */
+function syncThemeColor() {
+  const th = document.documentElement.dataset.theme;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    if (!m.dataset.c) m.dataset.c = m.content;
+    m.content = th ? (th === 'dark' ? '#10181F' : '#F6F3EC') : m.dataset.c;
+  });
+}
+syncThemeColor();
 
 /* tags like "Gấp" and "Quá hạn" depend on the clock: refresh each minute, never while a form or field is in use */
 setInterval(() => {
