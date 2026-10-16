@@ -1,11 +1,7 @@
-// Database Postgres giả trong bộ nhớ, dùng cho test và chạy thử không cần cài Postgres.
+// Pool Postgres giả trong bộ nhớ (pg-mem) cho test và chạy thử.
 const { newDb } = require('pg-mem');
-const db = require('../src/db');
-
-function useMemoryDb() {
-  const mem = newDb();
-  const { Pool } = mem.adapters.createPg();
-  db.setPool(new Pool());
-  return mem;
+function memoryPool() {
+  const { Pool } = newDb().adapters.createPg();
+  return new Pool();
 }
-module.exports = { useMemoryDb };
+module.exports = { memoryPool };
