@@ -2,9 +2,11 @@
    App gọi window.claude.use('db') rồi dùng db.collection(col).doc(id).set/delete và onSnapshot,
    nên ở đây cung cấp đúng giao diện đó, phía sau là REST API + polling 15 giây. */
 (function () {
-  const API = (window.BLOOM_API || '') + '/api';
+  // Địa chỉ API: mặc định cùng domain; muốn tách domain thì đặt <meta name="bloom-api" content="https://...">
+  const meta = document.querySelector('meta[name="bloom-api"]');
+  const API = ((meta && meta.content) || '').replace(/\/$/, '') + '/api';
   const TOKEN_KEY = 'bloom_token';
-  const POLL_MS = 15000;
+  let pollMs = 15000; // ghi đè bằng CLIENT_POLL_MS từ server qua /api/config
   const getToken = () => localStorage.getItem(TOKEN_KEY);
 
   async function call(method, url, body) {
@@ -31,7 +33,14 @@
       listeners[col].forEach(l => l.next(snap));
     } catch (e) { listeners[col].forEach(l => l.error && l.error(e)); }
   }
-  setInterval(() => { if (!document.hidden) { refresh('orders'); refresh('flowers'); } }, POLL_MS);
+  let timer = null;
+  const startPolling = () => {
+    clearInterval(timer);
+    timer = setInterval(() => { if (!document.hidden) { refresh('orders'); refresh('flowers'); } }, pollMs);
+  };
+  fetch(API + '/config').then(r => r.ok ? r.json() : null)
+    .then(c => { if (c && Number(c.pollMs) >= 2000) pollMs = Number(c.pollMs); })
+    .catch(() => {}).finally(startPolling);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh('orders'); refresh('flowers'); } });
 
   const db = {
