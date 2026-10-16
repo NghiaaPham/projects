@@ -4,13 +4,15 @@ services:
     runtime: node
     rootDir: bloom-by-giang
     plan: free
-    buildCommand: npm install --omit=dev
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: DATABASE_URL
         sync: false
-      - key: SHOP_PASSWORD
+      - key: SHOP_PASSWORD_HASH
         sync: false
       - key: JWT_SECRET
         generateValue: true
