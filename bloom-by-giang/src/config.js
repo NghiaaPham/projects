@@ -44,6 +44,7 @@ function load() {
   if (!cfg.shopPassword && !cfg.shopPasswordHash) missing.push('SHOP_PASSWORD_HASH (hoặc SHOP_PASSWORD)');
   if (!cfg.jwtSecret) missing.push('JWT_SECRET');
   if (missing.length) throw new Error('Thiếu biến môi trường: ' + missing.join(', '));
+  if (cfg.shopPasswordHash && !/^scrypt:[a-f0-9]+:[a-f0-9]+$/.test(cfg.shopPasswordHash.trim())) throw new Error('SHOP_PASSWORD_HASH sai định dạng, tạo lại bằng: npm run hash-password -- "matkhau"');
   if (cfg.isProd && cfg.jwtSecret.length < 32) throw new Error('JWT_SECRET phải dài ít nhất 32 ký tự khi chạy production');
   if (cfg.isProd && !cfg.shopPasswordHash) console.warn('[cảnh báo] Nên dùng SHOP_PASSWORD_HASH thay cho SHOP_PASSWORD ở production (npm run hash-password)');
   return cfg;
