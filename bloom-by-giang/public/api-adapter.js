@@ -33,6 +33,8 @@
       listeners[col].forEach(l => l.next(snap));
     } catch (e) { listeners[col].forEach(l => l.error && l.error(e)); }
   }
+  const soon = {};
+  const refreshSoon = (col) => { clearTimeout(soon[col]); soon[col] = setTimeout(() => refresh(col), 400); };
   let timer = null;
   const startPolling = () => {
     clearInterval(timer);
@@ -49,8 +51,9 @@
         doc(id) {
           const path = '/' + col + '/' + encodeURIComponent(id);
           return {
-            set: (item) => call('PUT', path, item),
-            delete: () => call('DELETE', path),
+            // lưu xong tải lại để nhận đường dẫn ảnh server trả về
+            set: (item) => call('PUT', path, item).then(r => { refreshSoon(col); return r; }),
+            delete: () => call('DELETE', path).then(r => { refreshSoon(col); return r; }),
           };
         },
         onSnapshot(next, error) {
@@ -99,6 +102,11 @@
       if (!getToken()) await loginScreen();
       return db;
     },
+  };
+  window.bloomExportText = async () => {
+    const res = await fetch(API + '/export', { headers: { Authorization: 'Bearer ' + getToken() } });
+    if (!res.ok) throw new Error('export_failed');
+    return res.text();
   };
   window.bloomLogout = () => { localStorage.removeItem(TOKEN_KEY); location.reload(); };
 })();
