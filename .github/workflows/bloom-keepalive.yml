@@ -21,7 +21,7 @@ jobs:
       - name: GET /api/health
         run: |
           for i in 1 2 3; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 https://bloom-by-giang.onrender.com/api/health || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 https://shophoacuathanhgiang.onrender.com/api/health || true)
             echo "lần $i: HTTP $code"
             [ "$code" = "200" ] && exit 0
             sleep 15
