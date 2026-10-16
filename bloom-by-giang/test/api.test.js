@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const request = require('supertest');
-const { memoryPool } = require('./memdb');
+const { testPool } = require('./memdb');
 const { createStore } = require('../src/db');
 const { createApp } = require('../src/app');
 const password = require('../src/password');
@@ -13,9 +13,10 @@ const baseCfg = {
   corsOrigins: [], bodyLimit: '1mb', loginRateWindowMin: 15, loginRateMax: 3, clientPollMs: 9000,
 };
 
-let app, token;
+let app, token, store;
+test.after(() => store.close());
 test.before(async () => {
-  const store = createStore(memoryPool());
+  store = createStore(await testPool());
   await store.migrate();
   app = createApp(baseCfg, store);
 });
@@ -85,8 +86,53 @@ test('config báo thiếu biến môi trường', () => {
   const saved = { ...process.env };
   delete process.env.DATABASE_URL; delete process.env.JWT_SECRET; delete process.env.SHOP_PASSWORD; delete process.env.SHOP_PASSWORD_HASH;
   assert.throws(() => load(), /DATABASE_URL/);
-  process.env.DATABASE_URL = 'postgres://x'; process.env.SHOP_PASSWORD_HASH = 'scrypt$a$b';
+  process.env.DATABASE_URL = 'postgres://x'; process.env.SHOP_PASSWORD_HASH = 'scrypt:aa:bb';
   process.env.JWT_SECRET = 'ngan'; process.env.NODE_ENV = 'production';
   assert.throws(() => load(), /32/);
   process.env = saved;
+});
+
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+test('ảnh đơn tách bảng riêng, đọc được, giữ khi sửa, xoá theo đơn', async () => {
+  const auth = { Authorization: 'Bearer ' + token };
+  const base = { id: 'img1', name: 'Có ảnh', date: '2026-10-16', status: 'pending', image: PNG };
+  const saved = (await request(app).put('/api/orders/img1').set(auth).send(base).expect(200)).body;
+  assert.match(saved.image, /^\/api\/images\/[a-f0-9]{32}$/);
+  const list = (await request(app).get('/api/orders').set(auth).expect(200)).body;
+  assert.equal(list.find(o => o.id === 'img1').image, saved.image);
+  const img = await request(app).get(saved.image).expect(200);
+  assert.equal(img.headers['content-type'], 'image/png');
+  // sửa trạng thái, gửi lại đường dẫn cũ -> giữ nguyên ảnh
+  const edited = (await request(app).put('/api/orders/img1').set(auth).send({ ...base, image: saved.image, status: 'done' }).expect(200)).body;
+  assert.equal(edited.image, saved.image);
+  // sao lưu đầy đủ nhúng lại ảnh
+  const bk = (await request(app).get('/api/export').set(auth).expect(200)).body;
+  assert.equal(bk.orders.find(o => o.id === 'img1').image, PNG);
+  // bỏ ảnh -> ảnh cũ bị xoá
+  await request(app).put('/api/orders/img1').set(auth).send({ ...base, image: '' }).expect(200);
+  await request(app).get(saved.image).expect(404);
+  // đơn có ảnh mới, xoá đơn -> xoá ảnh
+  const again = (await request(app).put('/api/orders/img1').set(auth).send(base).expect(200)).body;
+  await request(app).delete('/api/orders/img1').set(auth).expect(200);
+  await request(app).get(again.image).expect(404);
+});
+
+test('export cần đăng nhập, ảnh sai khoá trả 404', async () => {
+  await request(app).get('/api/export').expect(401);
+  await request(app).get('/api/images/khongtonai').expect(404);
+});
+
+test('migrate chuyển ảnh nhúng của dữ liệu cũ sang bảng images', async () => {
+  const pool = await testPool();
+  const s2 = createStore(pool);
+  await s2.migrate();
+  await pool.query('INSERT INTO orders (id, date, status, data) VALUES ($1, $2, $3, $4)',
+    ['old1', '2026-10-01', 'done', JSON.stringify({ id: 'old1', name: 'Đơn cũ', date: '2026-10-01', image: PNG })]);
+  await s2.moveInlineImages(); // migrate() gọi hàm này mỗi lần khởi động
+  const [o] = await s2.list('orders');
+  assert.match(o.image, /^\/api\/images\//);
+  const img = await s2.getImage(o.image.split('/').pop());
+  assert.ok(img && img.data.length > 0);
+  await s2.close();
 });
