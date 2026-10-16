@@ -14,3 +14,13 @@ CREATE TABLE IF NOT EXISTS flowers (
   data        JSONB NOT NULL,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Ảnh đơn hàng tách khỏi JSON đơn để danh sách tải nhẹ, đơn chỉ giữ đường dẫn /api/images/<key>
+CREATE TABLE IF NOT EXISTS images (
+  key         TEXT PRIMARY KEY,
+  order_id    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  data_b64    TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS images_order_idx ON images (order_id);
