@@ -916,7 +916,7 @@ function backupSheet() {
   return '<div class="sheet-head"><h2 class="h1">Sao lưu dữ liệu</h2>' + closeBtn + '</div>' +
     '<div class="card"><div class="sub">Đang có</div><div class="big-price num" style="font-size:26px">' + n + ' đơn · ' + f + ' mẫu hoa</div>' +
     '<div class="sub" style="margin-top:6px">' + (S.mode === 'db'
-      ? 'Dữ liệu đang lưu chung trên Claude. Vẫn nên giữ thêm một bản sao lưu.'
+      ? 'Dữ liệu đang lưu trên server của shop, mọi máy đăng nhập đều thấy. Vẫn nên giữ thêm một bản sao lưu.'
       : 'Dữ liệu nằm trong trình duyệt của máy này. Xóa dữ liệu trình duyệt hoặc đổi máy là mất, nên sao lưu thường xuyên.') + '</div></div>' +
     '<div class="actions"><button class="btn primary" type="button" data-act="bk-file">Tải file sao lưu</button>' +
     '<button class="btn" type="button" data-act="bk-copy">Sao chép dữ liệu</button></div>' +
@@ -934,7 +934,9 @@ function hasData() {
 }
 async function downloadBackup() {
   if (!hasData()) return;
-  const text = backupText(), filename = BK_NAME + TODAY + '.json';
+  // chế độ server: lấy bản sao lưu đầy đủ (kèm ảnh) từ server
+  const text = (S.mode === 'db' && window.bloomExportText) ? await window.bloomExportText().catch(() => backupText()) : backupText();
+  const filename = BK_NAME + TODAY + '.json';
   let dl = null;
   try { dl = window.claude && await window.claude.use('downloads'); } catch (e) { dl = null; }
   if (dl) {
@@ -960,7 +962,7 @@ function copyBackup() {
 /* only accept what the app itself writes: clean every field, drop anything malformed */
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 const num = v => { v = Number(v); return isFinite(v) && v >= 0 ? v : 0; };
-const okImg = v => typeof v === 'string' && /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v) ? v : '';
+const okImg = v => typeof v === 'string' && (/^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v) || /^\/api\/images\/[a-f0-9]{32}$/.test(v)) ? v : '';
 function cleanOrder(o) {
   if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(o.id)) return null;
   if (typeof o.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.date) || !str(o.name, 200).trim()) return null;
