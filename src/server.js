@@ -8,7 +8,8 @@ async function main() {
   const cfg = load();
   const blobs = cfg.supabaseUrl ? createSupabaseBlobs({ url: cfg.supabaseUrl, key: cfg.supabaseServiceKey, bucket: cfg.supabaseBucket }) : null;
   const store = createStore(createPgPool(cfg), blobs);
-  await store.migrate();
+  await store.migrate().catch(e => { e.message = '[database mới] ' + e.message; throw e; });
+  console.log(JSON.stringify({ level: 'info', msg: 'target db ok' }));
   if (cfg.sourceDatabaseUrl) {
     const { Pool } = require('pg');
     const { importFromSource } = require('./import-source');
@@ -16,6 +17,7 @@ async function main() {
     const source = new Pool({ connectionString: cfg.sourceDatabaseUrl, ...(cfg.sourceDbPassword ? { password: cfg.sourceDbPassword } : {}), ssl, max: 2 });
     const target = createPgPool(cfg);
     try {
+      await source.query('SELECT 1').catch(e => { e.message = '[database cũ] ' + e.message; throw e; });
       await importFromSource(target, source, (msg, extra) => console.log(JSON.stringify({ level: 'info', msg, ...extra })));
     } finally { await Promise.all([source.end(), target.end()]); }
   }
