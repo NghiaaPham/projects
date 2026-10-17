@@ -1,0 +1,6 @@
+node_modules
+.env
+test
+dev-memory.js
+*.md
+.git

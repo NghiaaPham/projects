@@ -1,0 +1,31 @@
+{
+  "name": "bloom-by-giang",
+  "version": "1.0.0",
+  "description": "Backend lưu đơn hàng và mẫu hoa cho shop Bloom by Giang (Express + PostgreSQL)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "dev:memory": "node dev-memory.js",
+    "test": "node --test test/*.test.js",
+    "hash-password": "node scripts/hash-password.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "compression": "^1.8.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.2",
+    "supertest": "^7.0.0"
+  }
+}
