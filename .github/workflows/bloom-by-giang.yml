@@ -29,8 +29,11 @@ jobs:
       - run: npm ci
       - name: Test (pg-mem)
         run: npm test
+        env:
+          MOVED_TO: 'off'
       - name: Test (PostgreSQL 16 thật)
         run: npm test
         env:
+          MOVED_TO: 'off'
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bloom_test
       - run: npm audit --omit=dev --audit-level=high

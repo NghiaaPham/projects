@@ -60,6 +60,14 @@ function cheapPinger(store) {
 
 function createApp(cfg, store) {
   const app = express();
+  // Web đã chuyển sang tài khoản của khách: mọi trang chuyển hướng sang địa chỉ mới (đổi bằng biến MOVED_TO, đặt "off" để tắt)
+  const movedTo = (process.env.MOVED_TO || 'https://shophoathanhgiang.onrender.com').replace(/\/$/, '');
+  if (movedTo !== 'off') {
+    app.get('/api/health', (req, res) => res.json({ ok: true, movedTo }));
+    app.use((req, res) => req.path.startsWith('/api/')
+      ? res.status(410).json({ error: 'Web đã chuyển sang địa chỉ mới', movedTo })
+      : res.redirect(301, movedTo + req.originalUrl));
+  }
   const { login, requireAuth } = createAuth(cfg);
   const cheapPing = cheapPinger(store);
   app.disable('x-powered-by');
