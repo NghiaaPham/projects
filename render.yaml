@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: shophoacuathanhgiang
+    name: shophoathanhgiang
     runtime: node
     region: singapore
     plan: free
