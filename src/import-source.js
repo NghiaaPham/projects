@@ -32,3 +32,24 @@ async function importFromSource(target, source, log = () => {}) {
 }
 
 module.exports = { importFromSource };
+
+// Chép qua HTTP từ web cũ (đăng nhập rồi tải file sao lưu /api/export), không cần mật khẩu database cũ.
+async function importFromApp(store, baseUrl, password, log = () => {}, fetchImpl = fetch) {
+  const [o, f] = await Promise.all([store.list('orders'), store.list('flowers')]);
+  if (o.length || f.length) { log('import skipped: target not empty'); return { skipped: true }; }
+  const base = baseUrl.replace(/\/$/, '');
+  const lr = await fetchImpl(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+  if (!lr.ok) throw new Error('[web cũ] đăng nhập thất bại: HTTP ' + lr.status);
+  const { token } = await lr.json();
+  const er = await fetchImpl(base + '/api/export', { headers: { Authorization: 'Bearer ' + token } });
+  if (!er.ok) throw new Error('[web cũ] tải sao lưu thất bại: HTTP ' + er.status);
+  const data = await er.json();
+  let orders = 0, flowers = 0;
+  for (const x of data.flowers || []) { const { id, ...rest } = x; await store.upsert('flowers', id, rest); flowers++; }
+  for (const x of data.orders || []) { const { id, ...rest } = x; await store.upsert('orders', id, rest); orders++; }
+  const out = { orders, flowers };
+  log('import done', out);
+  return out;
+}
+
+module.exports.importFromApp = importFromApp;

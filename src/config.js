@@ -41,6 +41,8 @@ function load() {
     clientPollMs: int('CLIENT_POLL_MS', 15000),
     supabaseUrl: env.SUPABASE_URL || '',
     supabaseServiceKey: env.SUPABASE_SERVICE_KEY || '',
+    sourceAppUrl: env.SOURCE_APP_URL || '',
+    sourceAppPassword: env.SOURCE_APP_PASSWORD || env.SHOP_PASSWORD || '',
     sourceDatabaseUrl: env.SOURCE_DATABASE_URL || '',
     sourceDbPassword: env.SOURCE_PGPASSWORD || '',
     supabaseBucket: env.SUPABASE_BUCKET || 'order-images',

@@ -10,7 +10,10 @@ async function main() {
   const store = createStore(createPgPool(cfg), blobs);
   await store.migrate().catch(e => { e.message = '[database mới] ' + e.message; throw e; });
   console.log(JSON.stringify({ level: 'info', msg: 'target db ok' }));
-  if (cfg.sourceDatabaseUrl) {
+  const logInfo = (msg, extra) => console.log(JSON.stringify({ level: 'info', msg, ...extra }));
+  if (cfg.sourceAppUrl) {
+    await require('./import-source').importFromApp(store, cfg.sourceAppUrl, cfg.sourceAppPassword, logInfo);
+  } else if (cfg.sourceDatabaseUrl) {
     const { Pool } = require('pg');
     const { importFromSource } = require('./import-source');
     const ssl = cfg.dbSsl ? { rejectUnauthorized: cfg.dbSslRejectUnauthorized } : false;

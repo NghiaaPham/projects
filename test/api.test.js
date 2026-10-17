@@ -258,3 +258,22 @@ test('không mật khẩu (REQUIRE_LOGIN mặc định tắt): đọc/ghi đơn 
   assert.equal(r.body[0].name, 'Không mật khẩu');
   await s.close();
 });
+
+test('bàn giao qua HTTP: đăng nhập web cũ, tải sao lưu, chép đơn + ảnh + hoa sang database mới', async () => {
+  const { importFromApp } = require('../src/import-source');
+  const src = createStore(await testPool()); await src.migrate();
+  await src.upsert('orders', 'h1', { name: 'Đơn HTTP', date: '2026-10-03', image: PNG });
+  await src.upsert('flowers', 'fh', { name: 'Cúc' });
+  const srcApp = createApp(baseCfg, src);
+  const server = srcApp.listen(0); const url = 'http://127.0.0.1:' + server.address().port;
+  const dst = createStore(await testPool()); await dst.migrate();
+  try {
+    await assert.rejects(importFromApp(dst, url, 'sai'), /đăng nhập thất bại/);
+    assert.deepEqual(await importFromApp(dst, url, PW), { orders: 1, flowers: 1 });
+    const o = (await dst.list('orders'))[0];
+    assert.equal(o.name, 'Đơn HTTP');
+    const img = await dst.getImage(o.image.split('/').pop());
+    assert.ok(img && img.data.length > 0);
+    assert.ok((await importFromApp(dst, url, PW)).skipped);
+  } finally { server.close(); await src.close(); await dst.close(); }
+});
