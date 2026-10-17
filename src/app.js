@@ -97,7 +97,7 @@ function createApp(cfg, store) {
       res.set('Content-Type', img.mime).set('Cache-Control', 'private, max-age=31536000, immutable').send(Buffer.from(img.data));
     } catch (e) { next(e); }
   });
-  app.get('/api/config', (req, res) => res.json({ pollMs: cfg.clientPollMs }));
+  app.get('/api/config', (req, res) => res.json({ pollMs: cfg.clientPollMs, requireLogin: cfg.requireLogin }));
 
   const loginLimiter = rateLimit({
     windowMs: cfg.loginRateWindowMin * 60 * 1000,

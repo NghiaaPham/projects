@@ -8,7 +8,7 @@ const password = require('../src/password');
 
 const PW = 'mat-khau-test-' + Date.now();
 const baseCfg = {
-  nodeEnv: 'test', isProd: false, trustProxy: 0,
+  nodeEnv: 'test', requireLogin: true, isProd: false, trustProxy: 0,
   shopPasswordHash: password.hash(PW), jwtSecret: 'x'.repeat(40), jwtExpiresIn: '1h',
   corsOrigins: [], bodyLimit: '1mb', loginRateWindowMin: 15, loginRateMax: 3, clientPollMs: 9000,
 };
@@ -246,4 +246,15 @@ test('bàn giao: chép toàn bộ dữ liệu từ database cũ sang database m�
   assert.equal((await dst.list('flowers'))[0].name, 'Hồng');
   assert.ok((await importFromSource(dstPool, srcPool)).skipped);
   await src.close(); await dst.close();
+});
+
+test('không mật khẩu (REQUIRE_LOGIN mặc định tắt): đọc/ghi đơn không cần đăng nhập, /api/config báo requireLogin=false', async () => {
+  const s = createStore(await testPool()); await s.migrate();
+  const openApp = createApp({ ...baseCfg, requireLogin: false }, s);
+  const c = await request(openApp).get('/api/config');
+  assert.equal(c.body.requireLogin, false);
+  await request(openApp).put('/api/orders/o1').send({ name: 'Không mật khẩu', date: '2026-10-18' }).expect(200);
+  const r = await request(openApp).get('/api/orders').expect(200);
+  assert.equal(r.body[0].name, 'Không mật khẩu');
+  await s.close();
 });

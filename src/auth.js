@@ -17,6 +17,7 @@ function createAuth(cfg) {
   }
 
   function requireAuth(req, res, next) {
+    if (!cfg.requireLogin) return next(); // chế độ không mật khẩu
     const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
     if (!m) return res.status(401).json({ error: 'Cần đăng nhập' });
     try { req.user = jwt.verify(m[1], cfg.jwtSecret); next(); }

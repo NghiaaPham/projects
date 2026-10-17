@@ -139,6 +139,8 @@
   window.claude = {
     async use(name) {
       if (name !== 'db') return null; // các tính năng khác (tải file) dùng mặc định của trình duyệt
+      const conf = await fetch(API + '/config').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (conf && conf.requireLogin === false) { delete window.bloomLogout; return db; } // không cần mật khẩu
       if (!getToken()) await loginScreen();
       return db;
     },
